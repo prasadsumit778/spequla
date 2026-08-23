@@ -236,6 +236,20 @@ def compile_metric(conn, schema: str, tenant_id: str, entity_id: int, metric_id:
     for v in dep_results.values():
         out.load_run_ids |= v.load_run_ids
 
+    # CLAUDE.md invariant 7 / corpus/07 section 8: a citation must resolve to
+    # source rows. corpus/05's `source_facts` column carries the literal
+    # sentinel 'derived' for every metric defined over other metrics, which
+    # names no table and resolves to nothing on its own. Replace it with the
+    # union of what the dependency closure actually read -- the same reason
+    # row_count and load_run_ids are aggregated here rather than left empty.
+    inherited: list[str] = []
+    for v in dep_results.values():
+        for f in v.source_facts:
+            if f != "derived" and f not in inherited:
+                inherited.append(f)
+    out.source_facts = [f for f in reg.source_facts if f != "derived"] + \
+                          [f for f in inherited if f not in reg.source_facts]
+
     formula = reg.formula
     if metric_id == "dso":
         revenue_base = out.parameters_used.get("revenue_base", DSO_DEFAULT_REVENUE_BASE)
