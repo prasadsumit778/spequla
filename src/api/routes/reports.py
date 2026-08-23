@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
 
 from src.api.deps.auth import Session, require_upload_role
@@ -20,6 +20,8 @@ from src.api.deps.tenant import resolve_tenant
 from src.config.loader import load_registry
 from src.reports.pack import generate_pack
 from src.reports.query import NoApprovedMappingError
+from src.reports.document import render_html
+from src.reports.edits import edits_by_period
 from src.reports.signoff import (
     SignOffBlocked,
     edit_commentary,
@@ -78,6 +80,33 @@ def generate_report(body: GenerateRequest, session: Session = Depends(require_up
     return _summary(artefact)
 
 
+@router.get("/reports/edits-per-pack")
+def edits_per_pack(entity_id: int = 1, session: Session = Depends(require_upload_role),
+                       tenant_ctx=Depends(resolve_tenant)):
+    """corpus/02 section 8's primary commercial metric, per period.
+
+    corpus/11 section 4 has this as tracked and NOT gated, with no declared
+    target -- so this endpoint reports counts and says nothing about whether
+    they are good. Any judgement is the analyst's.
+    """
+    conn, tenant_id, schema = tenant_ctx
+    series = edits_by_period(conn, schema, tenant_id, entity_id)
+    return {
+        "entity_id": entity_id,
+        "target": None,  # corpus/11 section 4: tracked, not gated. No target is declared.
+        "periods": [
+            {
+                "period_key": e.period_key,
+                "commentary_edits": e.commentary_edits,
+                "number_corrections": e.number_corrections,
+                "total_edits": e.total_edits,
+                "generations": e.generations,
+                "signed": e.signed,
+            }
+            for e in series
+        ],
+    }
+
 @router.get("/reports/{report_artefact_id}")
 def get_report(report_artefact_id: int, session: Session = Depends(require_upload_role),
                   tenant_ctx=Depends(resolve_tenant)):
@@ -90,21 +119,36 @@ def get_report(report_artefact_id: int, session: Session = Depends(require_uploa
 
 
 @router.get("/reports/{report_artefact_id}/export")
-def export_report(report_artefact_id: int, session: Session = Depends(require_upload_role),
+def export_report(report_artefact_id: int, format: str = "document",
+                      session: Session = Depends(require_upload_role),
                       tenant_ctx=Depends(resolve_tenant)):
-    """corpus/08 section 2: 'export.' P0's export renderer is the pack's
-    full stored JSON -- chart specs included as specs, per corpus/08 section
-    8, never rasterised -- suitable for the frontend to render as a
-    printable page or attach as-is; no separate document format is declared
-    anywhere in the corpus."""
+    """corpus/02 section 3 P0 #10: the pack "exported as a document."
+
+    Default is a self-contained HTML document a browser prints to PDF.
+    `?format=json` returns the stored artefact instead, for a caller that
+    wants the data rather than the document. Either way the chart specs stay
+    specs and are drawn at render time, never rasterised into the artefact
+    (corpus/08 section 8).
+    """
     conn, _tenant_id, schema = tenant_ctx
+    if format not in ("document", "json"):
+        raise HTTPException(status_code=400, detail="format must be 'document' or 'json'")
     try:
         rendered = render_pack(conn, schema, report_artefact_id)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     if rendered["status"] != "signed":
         raise HTTPException(status_code=422, detail="only a signed pack can be exported")
-    return _jsonable_render(rendered)
+    if format == "json":
+        return _jsonable_render(rendered)
+    return Response(
+        content=render_html(_jsonable_render(rendered)),
+        media_type="text/html; charset=utf-8",
+        headers={
+            "Content-Disposition":
+                f'inline; filename="pack-{rendered["period_key"]}-{report_artefact_id}.html"'
+        },
+    )
 
 
 class CommentaryRequest(BaseModel):
@@ -116,7 +160,7 @@ def update_commentary(report_artefact_id: int, body: CommentaryRequest,
                           session: Session = Depends(require_upload_role), tenant_ctx=Depends(resolve_tenant)):
     conn, _tenant_id, schema = tenant_ctx
     try:
-        artefact = edit_commentary(conn, schema, report_artefact_id, body.commentary)
+        artefact = edit_commentary(conn, schema, report_artefact_id, body.commentary, session.user_id)
     except (ValueError, SignOffBlocked) as e:
         raise HTTPException(status_code=422, detail=str(e))
     return _summary(artefact)

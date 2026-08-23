@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useAuth, useAccessToken } from "@workos-inc/authkit-nextjs/components";
 import { uploadFile, UploadResult } from "@/lib/api";
 
-const TEMPLATE_TYPES = ["COA", "TB", "GL", "ConsumerSales", "MFGProduction"] as const;
+const TEMPLATE_TYPES = ["COA", "TB", "GL", "Bank", "ConsumerSales", "MFGProduction"] as const;
 // Per corpus/02 section 2: only these two roles touch ingestion in P0.
 const UPLOAD_ALLOWED_ROLES = new Set(["spequla_analyst", "client_finance_lead"]);
 
@@ -79,7 +79,12 @@ export default function UploadPage() {
         </label>
         <label>
           File
-          <input type="file" accept=".csv" onChange={(e) => setFile(e.target.files?.[0] ?? null)} required />
+          <input
+            type="file"
+            accept=".csv,.xlsx"
+            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+            required
+          />
         </label>
         <button type="submit" disabled={busy || !accessToken} style={{ padding: "8px 16px", width: 160 }}>
           {busy ? "Uploading..." : "Upload"}

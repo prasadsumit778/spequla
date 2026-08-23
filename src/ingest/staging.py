@@ -24,6 +24,8 @@ from src.ingest.hashing import (
     PRODUCTION_OUTPUT_ROW_HASH_FIELDS,
     compute_row_hash,
 )
+from src.ingest.templates import BANK, COA, CONSUMER_SALES, GL, MFG_PRODUCTION, TB, Template
+from src.ingest.xlsx import extract_template, looks_like_legacy_xls, looks_like_xlsx
 
 PLAUSIBLE_DATE_MIN = date(1990, 1, 1)
 
@@ -50,6 +52,22 @@ def _read_csv(raw_bytes: bytes) -> tuple[list[str], list[dict]]:
     return header, rows
 
 
+def _read_tabular(raw_bytes: bytes, template: Template) -> tuple[list[str], list[dict]]:
+    """Read one of corpus/01's templates from CSV or .xlsx bytes.
+
+    corpus/02 section 3 P0 #1 is "Excel and CSV against the templates in file
+    01". The format is decided by the bytes themselves, not by the file name,
+    because a browser upload's name is user-supplied and a mislabelled
+    extension must not change how a financial file is parsed.
+
+    Both paths return the same (header, rows) shape, so the schema hash a
+    caller computes is identical for a template supplied either way.
+    """
+    if looks_like_xlsx(raw_bytes) or looks_like_legacy_xls(raw_bytes):
+        return extract_template(raw_bytes, list(template.columns))
+    return _read_csv(raw_bytes)
+
+
 def _parse_decimal(value: str | None) -> Decimal | None:
     if value is None or value.strip() == "":
         return Decimal("0")
@@ -74,7 +92,7 @@ def _plausible_date(d: date, today: date) -> bool:
 
 def stage_coa(raw_bytes: bytes) -> StagingResult:
     from src.ingest.landing import schema_hash as compute_schema_hash
-    header, rows = _read_csv(raw_bytes)
+    header, rows = _read_tabular(raw_bytes, COA)
     result = StagingResult(schema_hash=compute_schema_hash(header))
     for i, row in enumerate(rows):
         opening = _parse_decimal(row.get("opening_balance"))
@@ -99,7 +117,7 @@ def stage_coa(raw_bytes: bytes) -> StagingResult:
 
 def stage_tb(raw_bytes: bytes) -> StagingResult:
     from src.ingest.landing import schema_hash as compute_schema_hash
-    header, rows = _read_csv(raw_bytes)
+    header, rows = _read_tabular(raw_bytes, TB)
     result = StagingResult(schema_hash=compute_schema_hash(header))
     for i, row in enumerate(rows):
         period_end = _parse_date(row.get("period_end"))
@@ -127,7 +145,7 @@ def stage_gl(raw_bytes: bytes, today: date | None = None) -> StagingResult:
     only guarantees the batch it is given contains no internal duplicates."""
     from src.ingest.landing import schema_hash as compute_schema_hash
     today = today or date.today()
-    header, rows = _read_csv(raw_bytes)
+    header, rows = _read_tabular(raw_bytes, GL)
     result = StagingResult(schema_hash=compute_schema_hash(header))
     seen_keys: set[tuple] = set()
 
@@ -196,7 +214,7 @@ def stage_bank(raw_bytes: bytes, today: date | None = None) -> StagingResult:
     have no natural Dr/Cr side the way GL lines do)."""
     from src.ingest.landing import schema_hash as compute_schema_hash
     today = today or date.today()
-    header, rows = _read_csv(raw_bytes)
+    header, rows = _read_tabular(raw_bytes, BANK)
     result = StagingResult(schema_hash=compute_schema_hash(header))
     seen_keys: set[tuple] = set()
 
@@ -261,7 +279,7 @@ def stage_channel_order(raw_bytes: bytes, today: date | None = None) -> StagingR
     second line for one order_id today."""
     from src.ingest.landing import schema_hash as compute_schema_hash
     today = today or date.today()
-    header, rows = _read_csv(raw_bytes)
+    header, rows = _read_tabular(raw_bytes, CONSUMER_SALES)
     result = StagingResult(schema_hash=compute_schema_hash(header))
     seen_keys: set[tuple] = set()
 
@@ -348,7 +366,7 @@ def stage_mfg_production(raw_bytes: bytes, today: date | None = None) -> Staging
     event_date is that month-end, period_key derived from it."""
     from src.ingest.landing import schema_hash as compute_schema_hash
     today = today or date.today()
-    header, rows = _read_csv(raw_bytes)
+    header, rows = _read_tabular(raw_bytes, MFG_PRODUCTION)
     result = StagingResult(schema_hash=compute_schema_hash(header))
     seen_keys: set[tuple] = set()
 

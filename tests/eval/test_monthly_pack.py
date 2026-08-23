@@ -97,7 +97,8 @@ def test_rerender_is_byte_identical_even_after_the_underlying_data_changes(conn,
     pack = generate_pack(conn, schema, tenant_id, 1, "manufacturing", PERIOD_KEY, config, generated_by="pytest")
     artefact = write_report_artefact(conn, schema, pack)
     edited = edit_commentary(conn, schema, artefact.report_artefact_id,
-                                "- Revenue grew month over month.\n- Margins held steady.")
+                                "- Revenue grew month over month.\n- Margins held steady.",
+                                edited_by="pytest-analyst")
     signed = sign_pack(conn, schema, edited.report_artefact_id, reviewer="pytest-reviewer")
 
     import json

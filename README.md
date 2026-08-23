@@ -6,7 +6,7 @@ An always-on FP&A system for Indian mid-market companies. It ingests a company's
 
 ## The corpus is the only source of finance truth
 
-`/corpus` contains thirteen specification files — the authority on every financial definition, threshold, field name and business rule in this system. `CLAUDE.md` governs how this repository is built: no invented definitions, no invented thresholds, no invented source-system field names, no fabricated numbers. Where the corpus is genuinely silent or in conflict, the blocker is logged in [`OPEN_QUESTIONS.md`](./OPEN_QUESTIONS.md) rather than guessed — currently five open items (OQ-001 through OQ-005), each a real gap in the spec, not a placeholder.
+`/corpus` contains thirteen specification files — the authority on every financial definition, threshold, field name and business rule in this system. `CLAUDE.md` governs how this repository is built: no invented definitions, no invented thresholds, no invented source-system field names, no fabricated numbers. Where the corpus is genuinely silent or in conflict, the blocker is logged in [`OPEN_QUESTIONS.md`](./OPEN_QUESTIONS.md) rather than guessed — currently seven open items (OQ-001 through OQ-007), each a real gap or conflict in the spec, not a placeholder.
 
 | File | Authority over |
 |---|---|
@@ -54,6 +54,15 @@ All eight sprints in `corpus/12`'s backlog are complete:
 | 6 | The second profile — `fact_channel_order_line`, the consumer CM ladder, both revenue models, manufacturing operating metrics |
 | 7 | Pilot operations — tenant deletion, restore rehearsal, named time-bound employee access, per-tenant model cost tracking |
 
+Since then, three P0 capabilities that were specified but not built have been closed:
+
+| Capability | corpus reference | What was missing |
+|---|---|---|
+| Excel ingestion | 02 §3 P0 #1 | Only CSV parsed. `.xlsx` now loads on every stream, including the corpus/01 workbook itself |
+| Bank file upload | 02 §3 P0 #7 | `load_bank_file` existed but had no upload route, so books-to-bank could not be exercised |
+| Pack exported as a document | 02 §3 P0 #10 | Export returned JSON. It now returns a self-contained HTML document (`?format=json` for the data) |
+| Edits per pack | 02 §8, 11 §4 | The primary commercial metric was not tracked at all |
+
 Two things are deliberately left as connection points, not gaps: a real `AnthropicModelClient` (the vendor decision is the account owner's to make and set up), and a DB-level masking view enforcing Ask's admission gates at the role level (disclosed, not silently worked around, in `src/semantic/ask.py`).
 
 ## Stack
@@ -84,7 +93,7 @@ Python 3.12, FastAPI, psycopg3, Pydantic v2, PostgreSQL 16 (schema-per-tenant), 
 
 You need a Postgres instance (either `docker compose up -d` for local Postgres + MinIO, or a hosted instance such as Supabase — this project has been run against both) and a WorkOS application with AuthKit enabled.
 
-1. **Environment.** Copy `.env.example` to `.env` and fill in `DATABASE_URL`, object storage credentials, and `WORKOS_API_KEY` / `WORKOS_CLIENT_ID`. Copy `web/.env.local.example` to `web/.env.local` similarly, plus a generated `WORKOS_COOKIE_PASSWORD` (`openssl rand -base64 24`) and `NEXT_PUBLIC_WORKOS_REDIRECT_URI=http://localhost:3000/callback`.
+1. **Environment.** Nothing loads `.env` automatically — export it (`set -a; source .env; set +a`) or set the variables in your shell. Copy `.env.example` to `.env` and fill in `DATABASE_URL`, object storage credentials, and `WORKOS_API_KEY` / `WORKOS_CLIENT_ID`. Copy `web/.env.local.example` to `web/.env.local` similarly, plus a generated `WORKOS_COOKIE_PASSWORD` (`openssl rand -base64 24`) and `NEXT_PUBLIC_WORKOS_REDIRECT_URI=http://localhost:3000/callback`.
 2. **WorkOS setup.** In the WorkOS dashboard: create the four custom Roles (`promoter`, `client_finance_lead`, `spequla_analyst`, `admin`), add `http://localhost:3000/callback` under Redirects, create an Organization, and add yourself as a member with a role. Link that Organization to a tenant with `scripts/link_tenant_workos_org.py --tenant-id <uuid> --workos-org-id org_...`.
 3. **Database.** `python3 db/migrations/runner.py` applies every migration. `python3 scripts/create_tenant.py "Your Company" --synthetic` registers a tenant; `scripts/bootstrap.sh` does the full local-Postgres path end to end, including seeding both synthetic reference companies.
 4. **Backend.** `PYTHONPATH=. python3 -m uvicorn src.api.main:app --reload` — runs on `:8000`.

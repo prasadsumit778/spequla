@@ -30,6 +30,7 @@ from src.reports.statement_lines import (
     CONSUMER_GST_CLASSES,
     CONSUMER_MARKETING_CLASSES,
     CONSUMER_OPERATING_COST_CM1_CLASSES,
+    MANUFACTURING_CONDITIONAL_LINES,
     MANUFACTURING_PNL_LINES,
     MANUFACTURING_SECTIONS,
     REVENUE_SIGN,
@@ -67,6 +68,14 @@ def compute_manufacturing_pnl(movements: dict[str, Decimal], period_start: date,
             continue  # a BS class or a class this profile's layout doesn't show
         label, sign, _ordinal = MANUFACTURING_PNL_LINES[canonical_class]
         result.lines[label] = result.lines.get(label, Decimal("0")) + _presented(raw_amount, sign)
+
+    # corpus/08 section 4.2's row sequence is the layout, not a summary of what
+    # happened to have data. Every unconditional row is present, at zero where
+    # this company posted nothing to it.
+    for section_lines in MANUFACTURING_SECTIONS.values():
+        for label in section_lines:
+            if label not in result.lines and label not in MANUFACTURING_CONDITIONAL_LINES:
+                result.lines[label] = Decimal("0")
 
     def line(label: str) -> Decimal:
         return result.lines.get(label, Decimal("0"))

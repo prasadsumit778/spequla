@@ -27,6 +27,27 @@ class CanonicalWriteResult:
     unchanged: int = 0
 
 
+
+# PostgreSQL's wire protocol binds at most 65535 parameters to one statement
+# (the count is an int16 in libpq). A multi-row INSERT of N rows by C columns
+# sends N*C of them, so batching without a cap silently works on a small file
+# and fails outright on a real one -- fact_gl_entry has 22 columns, which puts
+# the ceiling at 2,978 journal lines in a single statement. A year of a real
+# mid-market GL is far past that. Rows are therefore inserted in chunks sized
+# to stay under the cap, still inside one transaction, so batching keeps its
+# speed without imposing a row limit on the customer's file.
+MAX_BIND_PARAMS = 65535
+
+
+def _row_chunks(rows: list, params_per_row: int):
+    """Yield slices of `rows` small enough to bind in one statement."""
+    if params_per_row < 1:
+        raise ValueError(f"params_per_row must be at least 1, got {params_per_row}")
+    size = max(1, MAX_BIND_PARAMS // params_per_row)
+    for start in range(0, len(rows), size):
+        yield rows[start:start + size]
+
+
 def resolve_account_key(conn, schema: str, tenant_id: str, entity_id: int,
                           account_code: str, account_name: str, load_run_id: int) -> int:
     """Find-or-create the current dim_account row for this source account.
@@ -86,10 +107,10 @@ def resolve_account_keys_batch(conn, schema: str, tenant_id: str, entity_id: int
             result[source_record_id] = account_key
 
         missing = [sr for sr in distinct if sr not in result]
-        if missing:
-            values_sql = ", ".join(["(%s,%s,%s,%s,%s,%s)"] * len(missing))
+        for _chunk in _row_chunks(missing, params_per_row=6):
+            values_sql = ", ".join(["(%s,%s,%s,%s,%s,%s)"] * len(_chunk))
             params: list = []
-            for source_record_id in missing:
+            for source_record_id in _chunk:
                 account_code, account_name = distinct[source_record_id]
                 params.extend([tenant_id, entity_id, account_code, account_name, load_run_id, source_record_id])
             cur.execute(
@@ -143,10 +164,10 @@ def write_coa_rows(conn, schema: str, tenant_id: str, entity_id: int, load_run_i
         to_update = [(sr, row) for sr, row in by_source_record_id.items() if sr in existing_keys]
         to_insert = [(sr, row) for sr, row in by_source_record_id.items() if sr not in existing_keys]
 
-        if to_update:
-            values_sql = ", ".join(["(%s,%s,%s)"] * len(to_update))
+        for _chunk in _row_chunks(to_update, params_per_row=3):
+            values_sql = ", ".join(["(%s,%s,%s)"] * len(_chunk))
             params: list = []
-            for source_record_id, row in to_update:
+            for source_record_id, row in _chunk:
                 normal_balance = NORMAL_BALANCE_BY_ACCOUNT_TYPE.get((row.get("account_type") or "").strip().lower())
                 params.extend([existing_keys[source_record_id], row.get("parent_group"), normal_balance])
             cur.execute(
@@ -157,10 +178,10 @@ def write_coa_rows(conn, schema: str, tenant_id: str, entity_id: int, load_run_i
                 params,
             )
 
-        if to_insert:
-            values_sql = ", ".join(["(%s,%s,%s,%s,%s,%s,%s,%s)"] * len(to_insert))
+        for _chunk in _row_chunks(to_insert, params_per_row=8):
+            values_sql = ", ".join(["(%s,%s,%s,%s,%s,%s,%s,%s)"] * len(_chunk))
             params = []
-            for source_record_id, row in to_insert:
+            for source_record_id, row in _chunk:
                 normal_balance = NORMAL_BALANCE_BY_ACCOUNT_TYPE.get((row.get("account_type") or "").strip().lower())
                 params.extend([tenant_id, entity_id, row["account_code"], row["account_name"],
                                 row.get("parent_group"), normal_balance, load_run_id, source_record_id])
@@ -258,11 +279,11 @@ def write_gl_rows(conn, schema: str, tenant_id: str, entity_id: int, load_run_id
                 (to_close,),
             )
 
-        if to_insert:
+        for chunk in _row_chunks(to_insert, params_per_row=22):
             values_sql = ", ".join(["(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)"]
-                                      * len(to_insert))
+                                      * len(chunk))
             params: list = []
-            for source_record_id, row in to_insert:
+            for source_record_id, row in chunk:
                 account_key = account_keys[row["account_code"] or row["account_name"]]
                 period_key = f'{row["voucher_date"].year:04d}-{row["voucher_date"].month:02d}'
                 params.extend([
@@ -325,10 +346,10 @@ def write_bank_rows(conn, schema: str, tenant_id: str, entity_id: int, load_run_
                 (to_close,),
             )
 
-        if to_insert:
-            values_sql = ", ".join(["(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)"] * len(to_insert))
+        for _chunk in _row_chunks(to_insert, params_per_row=16):
+            values_sql = ", ".join(["(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)"] * len(_chunk))
             params: list = []
-            for source_record_id, row in to_insert:
+            for source_record_id, row in _chunk:
                 period_key = f'{row["event_date"].year:04d}-{row["event_date"].month:02d}'
                 params.extend([
                     tenant_id, entity_id, row["bank_account_ref"], row["event_date"], row["value_date"],
@@ -413,10 +434,10 @@ def resolve_product_keys_batch(conn, schema: str, tenant_id: str, entity_id: int
             result[source_record_id] = product_key
 
         missing = [sr for sr in distinct if sr not in result]
-        if missing:
-            values_sql = ", ".join(["(%s,%s,%s,%s,%s,%s)"] * len(missing))
+        for _chunk in _row_chunks(missing, params_per_row=6):
+            values_sql = ", ".join(["(%s,%s,%s,%s,%s,%s)"] * len(_chunk))
             params: list = []
-            for source_record_id in missing:
+            for source_record_id in _chunk:
                 item_code, item_name = distinct[source_record_id]
                 params.extend([tenant_id, entity_id, item_code, item_name, load_run_id, source_record_id])
             cur.execute(
@@ -448,10 +469,10 @@ def resolve_location_keys_batch(conn, schema: str, tenant_id: str, entity_id: in
             result[source_record_id] = location_key
 
         missing = [name for name in distinct if name not in result]
-        if missing:
-            values_sql = ", ".join(["(%s,%s,%s,%s,%s)"] * len(missing))
+        for _chunk in _row_chunks(missing, params_per_row=5):
+            values_sql = ", ".join(["(%s,%s,%s,%s,%s)"] * len(_chunk))
             params: list = []
-            for name in missing:
+            for name in _chunk:
                 params.extend([tenant_id, entity_id, name, load_run_id, name])
             cur.execute(
                 f'INSERT INTO "{schema}".dim_location '
@@ -514,11 +535,10 @@ def write_channel_order_rows(conn, schema: str, tenant_id: str, entity_id: int, 
                 (to_close,),
             )
 
-        if to_insert:
-            values_sql = ", ".join(["(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)"]
-                                      * len(to_insert))
+        for _chunk in _row_chunks(to_insert, params_per_row=31):
+            values_sql = ", ".join(["(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)"] * len(_chunk))
             params: list = []
-            for source_record_id, row in to_insert:
+            for source_record_id, row in _chunk:
                 period_key = f'{row["event_date"].year:04d}-{row["event_date"].month:02d}'
                 product_key = product_keys[row["item_code"] or row["item_name"]]
                 channel_key = channel_keys[row["channel"]]
@@ -643,10 +663,10 @@ def write_production_output_rows(conn, schema: str, tenant_id: str, entity_id: i
                 (to_close,),
             )
 
-        if to_insert:
-            values_sql = ", ".join(["(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)"] * len(to_insert))
+        for _chunk in _row_chunks(to_insert, params_per_row=20):
+            values_sql = ", ".join(["(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)"] * len(_chunk))
             params: list = []
-            for source_record_id, row in to_insert:
+            for source_record_id, row in _chunk:
                 product_key = product_keys[row["item_code"] or row["item_name"]]
                 location_key = location_keys[row["plant_or_line"]]
                 params.extend([

@@ -69,6 +69,20 @@ MANUFACTURING_PNL_LINES: dict[str, tuple[str, int, int]] = {
     "tax.deferred": ("Tax", COST_SIGN, 43),
 }
 
+# corpus/08 section 4.2 lists the manufacturing P&L rows "in this order" and
+# marks the conditional ones in brackets: "Absorption variance [manufacturing,
+# if standard costing]" and the "Adjusted EBITDA [only if add-backs are
+# declared]" memo. Everything else is unconditional -- the spec goes out of its
+# way to say so for two of them ("Owner remuneration [shown as its own line,
+# always]", "Related party charges [shown as its own line, always]").
+#
+# So an unconditional row appears on the statement whether or not this company
+# posted to it, at zero if it did not. A statement that silently drops its
+# empty rows is not the layout corpus/08 specifies, and a reader cannot tell
+# "no returns this month" from "returns were not computed".
+MANUFACTURING_CONDITIONAL_LINES = frozenset({"Absorption variance"})
+
+
 # Which presentation lines make up which section of the layout, in order,
 # per corpus/08 section 4.2's exact row sequence.
 MANUFACTURING_SECTIONS = {

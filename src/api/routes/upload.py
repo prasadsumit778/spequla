@@ -11,20 +11,23 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from src.api.deps.auth import Session, require_upload_role
 from src.api.deps.tenant import resolve_tenant
 from src.ingest.load_pipeline import (
+    load_bank_file,
     load_channel_order_file,
     load_coa_file,
     load_gl_file,
     load_production_output_file,
     load_tb_file,
 )
+from src.ingest.xlsx import XlsxError
 
 router = APIRouter()
 
-# The sprint 1 story's three streams, plus sprint 6's two profile-specific
-# operating streams (corpus/04 sections 3.5, 3.6). Bank has a load_pipeline
-# function (load_bank_file) but, same as before sprint 6, no upload route --
-# not touched here, out of this sprint's scope.
-TEMPLATE_TYPES = {"COA", "TB", "GL", "ConsumerSales", "MFGProduction"}
+# The sprint 1 story's three streams, sprint 6's two profile-specific
+# operating streams (corpus/04 sections 3.5, 3.6), and Bank.
+# Every template in corpus/01 that has a loader. "Bank" is here because
+# corpus/02 section 3 P0 #7 requires books-to-bank to tie, and a bank file
+# that cannot be uploaded cannot be reconciled.
+TEMPLATE_TYPES = {"COA", "TB", "GL", "Bank", "ConsumerSales", "MFGProduction"}
 
 
 @router.post("/upload")
@@ -45,16 +48,26 @@ async def upload_file(
     raw_bytes = await file.read()
     triggered_by = session.user_id  # real identity now, not a role name -- corpus/02 section 2's logged-access requirement
 
-    if template_type == "GL":
-        result = load_gl_file(conn, schema, tenant_id, entity_id, file.filename, raw_bytes, triggered_by)
-    elif template_type == "COA":
-        result = load_coa_file(conn, schema, tenant_id, entity_id, file.filename, raw_bytes, triggered_by)
-    elif template_type == "ConsumerSales":
-        result = load_channel_order_file(conn, schema, tenant_id, entity_id, file.filename, raw_bytes, triggered_by)
-    elif template_type == "MFGProduction":
-        result = load_production_output_file(conn, schema, tenant_id, entity_id, file.filename, raw_bytes, triggered_by)
-    else:
-        result, _rows = load_tb_file(conn, tenant_id, entity_id, file.filename, raw_bytes, triggered_by)
+    # corpus/02 section 3 P0 #1: "Excel and CSV against the templates in file
+    # 01 ... The analyst normalises anything that does not match." A workbook
+    # that does not match is a readable 422 for the analyst to act on, never a
+    # 500 and never a partial load.
+    try:
+        if template_type == "GL":
+            result = load_gl_file(conn, schema, tenant_id, entity_id, file.filename, raw_bytes, triggered_by)
+        elif template_type == "COA":
+            result = load_coa_file(conn, schema, tenant_id, entity_id, file.filename, raw_bytes, triggered_by)
+        elif template_type == "Bank":
+            result = load_bank_file(conn, schema, tenant_id, entity_id, file.filename, raw_bytes, triggered_by)
+        elif template_type == "ConsumerSales":
+            result = load_channel_order_file(conn, schema, tenant_id, entity_id, file.filename, raw_bytes, triggered_by)
+        elif template_type == "MFGProduction":
+            result = load_production_output_file(conn, schema, tenant_id, entity_id, file.filename, raw_bytes, triggered_by)
+        else:
+            result, _rows = load_tb_file(conn, tenant_id, entity_id, file.filename, raw_bytes, triggered_by)
+    except XlsxError as e:
+        conn.rollback()
+        raise HTTPException(status_code=422, detail=str(e))
     conn.commit()
 
     if result.status == "blocked":

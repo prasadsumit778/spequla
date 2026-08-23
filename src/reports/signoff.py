@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from src.reports.edits import record_commentary_edit
 from src.reports.pack import content_hash
 
 
@@ -92,11 +93,21 @@ def get_report_artefact(conn, schema: str, report_artefact_id: int) -> ReportArt
     return _row_to_artefact(row) if row else None
 
 
-def edit_commentary(conn, schema: str, report_artefact_id: int, commentary: str) -> ReportArtefact:
+def edit_commentary(conn, schema: str, report_artefact_id: int, commentary: str,
+                       edited_by: str) -> ReportArtefact:
     """corpus/08 section 7 #2: 'Commentary is human-written... build the
     editor, not a generator.' Allowed only while status='draft' -- a signed
-    pack's commentary is frozen, same as everything else in it."""
+    pack's commentary is frozen, same as everything else in it.
+
+    Every edit is appended to pack_edit_event with the superseded wording, so
+    "edits per pack" (corpus/02 section 8, the primary commercial metric) is
+    countable and no prior text is lost. The editor is named for the same
+    reason sign_pack names its reviewer.
+    """
     import json
+    if not edited_by:
+        raise ValueError("edit_commentary requires a named editor -- corpus/02 section 8 counts "
+                            "edits 'made by the analyst'")
     artefact = get_report_artefact(conn, schema, report_artefact_id)
     if artefact is None:
         raise ValueError(f"no report_artefact {report_artefact_id}")
@@ -113,6 +124,11 @@ def edit_commentary(conn, schema: str, report_artefact_id: int, commentary: str)
             (commentary, json.dumps(sections), hash_, report_artefact_id),
         )
         row = cur.fetchone()
+    record_commentary_edit(
+        conn, schema, artefact.tenant_id, artefact.entity_id, report_artefact_id,
+        artefact.period_key, edited_by,
+        previous_commentary=artefact.commentary, new_commentary=commentary,
+    )
     conn.commit()
     return _row_to_artefact(row)
 
