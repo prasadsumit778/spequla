@@ -66,7 +66,12 @@ def test_gated_metrics_do_not_serve_a_default(conn, tenant):
     period = "2025-03"
 
     expectations = {
-        "net_revenue": {"D-006"},
+        # Transitive, per corpus/05's `dependencies` + `unresolved_decisions`
+        # columns: net_revenue's own open decision is D-006, and it depends on
+        # gross_revenue, whose own open decisions are D-001 and D-002. The
+        # closure is what gates the metric -- the same reason dso and
+        # gross_margin_pct below carry D-001/D-002 through this identical path.
+        "net_revenue": {"D-006", "D-001", "D-002"},
         "gross_margin_pct": {"D-006", "D-012", "D-015", "D-016", "D-017", "D-018", "D-001", "D-002"},
         "ebitda": {"D-006", "D-012", "D-015", "D-016", "D-017", "D-018", "D-001", "D-002"},
         "working_capital": {"D-018"},
