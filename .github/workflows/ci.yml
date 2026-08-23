@@ -23,8 +23,34 @@ jobs:
           --health-retries 10
     env:
       DATABASE_URL: postgresql://spequla:spequla@localhost:5432/spequla
+      OBJECT_STORE_ENDPOINT: http://localhost:9000
+      OBJECT_STORE_ACCESS_KEY: spequla
+      OBJECT_STORE_SECRET_KEY: spequla_dev_only
+      OBJECT_STORE_BUCKET: spequla-raw
     steps:
       - uses: actions/checkout@v4
+
+      # corpus/04 section 2's immutable raw landing. Every ingestion path
+      # writes the raw file to object storage before staging, so the whole
+      # integration suite needs it. Same image, credentials and bucket as
+      # docker-compose.yml uses locally; src/ingest/landing.py creates the
+      # bucket on first use. Started as a plain container rather than a
+      # service because service containers cannot override an image's
+      # command, and minio/minio needs `server /data`. Readiness mirrors
+      # docker-compose's healthcheck for this service: 20 tries, 2s apart.
+      - name: Start object store
+        run: |
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=spequla \
+            -e MINIO_ROOT_PASSWORD=spequla_dev_only \
+            minio/minio server /data
+          for _ in $(seq 20); do
+            curl -sf http://localhost:9000/minio/health/live && exit 0
+            sleep 2
+          done
+          echo "object store did not become ready" >&2
+          docker logs minio >&2
+          exit 1
 
       - uses: actions/setup-python@v5
         with:
