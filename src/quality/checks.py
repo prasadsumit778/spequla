@@ -206,11 +206,16 @@ def check_duplicate_content_different_voucher(conn, schema: str, tenant_id: str,
     id since that's what this defect actually is."""
     with conn.cursor() as cur:
         cur.execute(
-            f'SELECT fg.account_key, fg.voucher_date, fg.debit, fg.credit, fg.narration, '
+            # Canonical column names per corpus/04 section 3.3: staging's
+            # `voucher_date` lands as `event_date`, and there is no debit/credit
+            # pair -- `amount_base` is the single signed amount (Dr positive,
+            # Cr negative). "Same account, date, amount and narration" is the
+            # defect this check is defined against (corpus/11 section 2.2 #2).
+            f'SELECT fg.account_key, fg.event_date, fg.amount_base, fg.narration, '
             f'       count(DISTINCT fg.voucher_no), array_agg(DISTINCT fg.voucher_no), sum(fg.amount_base) '
             f'FROM "{schema}".fact_gl_entry fg '
             f'WHERE fg.tenant_id = %s AND fg.entity_id = %s AND fg.period_key = %s AND fg.is_current '
-            f'GROUP BY fg.account_key, fg.voucher_date, fg.debit, fg.credit, fg.narration '
+            f'GROUP BY fg.account_key, fg.event_date, fg.amount_base, fg.narration '
             f'HAVING count(DISTINCT fg.voucher_no) > 1',
             (tenant_id, entity_id, period_key),
         )
@@ -223,7 +228,7 @@ def check_duplicate_content_different_voucher(conn, schema: str, tenant_id: str,
             period_key=period_key, object_type="account", object_ref=str(account_key), value_inr=abs(amt),
             suggested_action="Confirm with the source system whether these are genuinely separate vouchers.",
         )
-        for account_key, _vdate, _dr, _cr, _narr, n, vouchers, amt in rows
+        for account_key, _edate, _amount, _narr, n, vouchers, amt in rows
     ]
 
 
