@@ -1,0 +1,43 @@
+# Generated from corpus/05 and corpus/05a for metric 'dpo'. Do not hand-edit.
+source: corpus/05_SPEQULA_METRIC_REGISTRY.csv (registry row only; no worked contract exists in corpus/05a
+  for this metric)
+registry:
+  metric_id: dpo
+  label: Days payable outstanding
+  category: CONVENTION
+  profile: both
+  p0_ask: true
+  p0_statement: true
+  definition: How long the business takes to pay suppliers.
+  formula: metric.accounts_payable / metric.[declared_cost_base] * days_in_period
+  unit: days
+  source_facts:
+  - derived
+  dimensions:
+  - entity
+  - date
+  time_grain: month
+  time_logic: period_sum
+  aggregation: ratio_of_sums
+  comparisons:
+  - mom
+  - yoy
+  allowed_filters:
+  - entity
+  - period
+  - customer
+  - product
+  - channel
+  - location
+  - cost_centre
+  dependencies:
+  - accounts_payable
+  - cogs
+  alternative_definitions: Computed on purchases, on COGS, or on COGS plus opex
+  override_allowed: true
+  governed_by:
+  - D-030
+  unresolved_decisions: []
+  compiles: true
+  version: 1
+  owner: SPEQULA global default, resolved 2026-08-20

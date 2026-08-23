@@ -1,0 +1,44 @@
+# Generated from corpus/05 and corpus/05a for metric 'pbt'. Do not hand-edit.
+source: corpus/05_SPEQULA_METRIC_REGISTRY.csv (registry row only; no worked contract exists in corpus/05a
+  for this metric)
+registry:
+  metric_id: pbt
+  label: Profit before tax
+  category: STANDARD
+  profile: both
+  p0_ask: false
+  p0_statement: true
+  definition: Profit before tax.
+  formula: metric.ebit + metric.other_income - metric.interest_expense
+  unit: INR
+  source_facts:
+  - derived
+  dimensions:
+  - entity
+  - date
+  time_grain: month
+  time_logic: period_sum
+  aggregation: sum
+  comparisons:
+  - mom
+  - yoy
+  - ytd
+  allowed_filters:
+  - entity
+  - period
+  - customer
+  - product
+  - channel
+  - location
+  - cost_centre
+  dependencies:
+  - ebit
+  - other_income
+  - interest_expense
+  alternative_definitions: None in common use
+  override_allowed: false
+  governed_by: []
+  unresolved_decisions: []
+  compiles: true
+  version: 1
+  owner: SPEQULA global default

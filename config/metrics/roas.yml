@@ -1,0 +1,45 @@
+# Generated from corpus/05 and corpus/05a for metric 'roas'. Do not hand-edit.
+source: corpus/05_SPEQULA_METRIC_REGISTRY.csv (registry row only; no worked contract exists in corpus/05a
+  for this metric)
+registry:
+  metric_id: roas
+  label: ROAS
+  category: MANAGEMENT
+  profile: consumer
+  p0_ask: true
+  p0_statement: false
+  definition: Net revenue per rupee of marketing spend. Correlational, never presented as a causal return.
+  formula: metric.net_revenue / metric.marketing_spend
+  unit: ratio
+  source_facts:
+  - derived
+  dimensions:
+  - entity
+  - date
+  - channel
+  - business_unit
+  time_grain: month
+  time_logic: period_sum
+  aggregation: ratio_of_sums
+  comparisons:
+  - mom
+  - yoy
+  - ytd
+  allowed_filters:
+  - entity
+  - period
+  - customer
+  - product
+  - channel
+  - location
+  - cost_centre
+  dependencies:
+  - net_revenue
+  - marketing_spend
+  alternative_definitions: None in common use
+  override_allowed: false
+  governed_by: []
+  unresolved_decisions: []
+  compiles: true
+  version: 1
+  owner: SPEQULA global default

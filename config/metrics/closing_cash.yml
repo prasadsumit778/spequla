@@ -1,0 +1,44 @@
+# Generated from corpus/05 and corpus/05a for metric 'closing_cash'. Do not hand-edit.
+source: corpus/05_SPEQULA_METRIC_REGISTRY.csv (registry row only; no worked contract exists in corpus/05a
+  for this metric)
+registry:
+  metric_id: closing_cash
+  label: Closing cash
+  category: STANDARD
+  profile: both
+  p0_ask: true
+  p0_statement: true
+  definition: Cash at the end of the period. Must equal the balance sheet cash figure exactly.
+  formula: opening_cash + metric.operating_cash_flow + metric.investing_cash_flow + metric.financing_cash_flow
+  unit: INR
+  source_facts:
+  - derived
+  dimensions:
+  - entity
+  - date
+  time_grain: month
+  time_logic: period_end
+  aggregation: last_value
+  comparisons:
+  - mom
+  - yoy
+  allowed_filters:
+  - entity
+  - period
+  - customer
+  - product
+  - channel
+  - location
+  - cost_centre
+  dependencies:
+  - operating_cash_flow
+  - investing_cash_flow
+  - financing_cash_flow
+  - cash
+  alternative_definitions: None in common use
+  override_allowed: false
+  governed_by: []
+  unresolved_decisions: []
+  compiles: true
+  version: 1
+  owner: SPEQULA global default

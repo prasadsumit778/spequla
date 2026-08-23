@@ -1,0 +1,48 @@
+# Generated from corpus/05 and corpus/05a for metric 'aov'. Do not hand-edit.
+source: corpus/05_SPEQULA_METRIC_REGISTRY.csv (registry row only; no worked contract exists in corpus/05a
+  for this metric)
+registry:
+  metric_id: aov
+  label: Average order value
+  category: MANAGEMENT
+  profile: consumer
+  p0_ask: true
+  p0_statement: false
+  definition: Net revenue per order.
+  formula: metric.net_revenue / metric.orders
+  unit: INR
+  source_facts:
+  - derived
+  dimensions:
+  - entity
+  - date
+  - channel
+  - product
+  - customer
+  - business_unit
+  time_grain: month
+  time_logic: period_sum
+  aggregation: ratio_of_sums
+  comparisons:
+  - mom
+  - yoy
+  - ytd
+  allowed_filters:
+  - entity
+  - period
+  - customer
+  - product
+  - channel
+  - location
+  - cost_centre
+  dependencies:
+  - net_revenue
+  - orders
+  alternative_definitions: Which costs count as variable is entirely a declaration and every company differs
+  override_allowed: true
+  governed_by:
+  - D-049
+  unresolved_decisions: []
+  compiles: true
+  version: 1
+  owner: SPEQULA global default, resolved 2026-08-20

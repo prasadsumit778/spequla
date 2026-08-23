@@ -1,0 +1,62 @@
+# Generated from corpus/05 and corpus/05a for metric 'corporate_overhead'. Do not hand-edit.
+source: corpus/05a_SPEQULA_METRIC_CONTRACTS.yml (worked contract)
+registry:
+  metric_id: corporate_overhead
+  label: Corporate overhead
+  category: MANAGEMENT
+  profile: both
+  p0_ask: true
+  p0_statement: false
+  definition: Unallocated central cost, deducted below CM2 to reach EBITDA. Never allocated to a business
+    unit or channel.
+  formula: gl_class(opex.admin_general|opex.professional_fees|opex.insurance|opex.rates_taxes) + declared
+    central classes
+  unit: INR
+  source_facts:
+  - fact_gl_entry
+  dimensions:
+  - entity
+  - date
+  time_grain: month
+  time_logic: period_sum
+  aggregation: sum
+  comparisons:
+  - mom
+  - yoy
+  - ytd
+  allowed_filters:
+  - entity
+  - period
+  - customer
+  - product
+  - channel
+  - location
+  - cost_centre
+  dependencies: []
+  alternative_definitions: Some companies allocate. This system does not, per D-062
+  override_allowed: true
+  governed_by:
+  - D-062
+  unresolved_decisions: []
+  compiles: true
+  version: 1
+  owner: SPEQULA global default, resolved 2026-08-20
+contract:
+  version: 1
+  label: Corporate overhead
+  category: MANAGEMENT
+  definition: Unallocated central cost between CM2 and EBITDA.
+  formula: sum(declared_central_classes)
+  allocation:
+    allocated: false
+    rule: 'D-062. Never allocated to a business unit, channel or product. Allocation changes which unit
+      looks profitable and is a policy rather than a calculation. Refusing to allocate is the honest answer
+      and is what the reference MIS does.
+
+      '
+  dimensions:
+  - entity
+  - date
+  governed_by:
+  - D-062
+  approved_by: human

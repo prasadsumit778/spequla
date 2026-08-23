@@ -1,0 +1,5 @@
+# Test/dev-only, on top of the production runtime deps. Never installed into
+# the production Docker image (Dockerfile installs requirements.txt only).
+-r requirements.txt
+pytest
+sqlparse

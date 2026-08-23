@@ -1,0 +1,48 @@
+# Generated from corpus/05 and corpus/05a for metric 'ebitda'. Do not hand-edit.
+source: corpus/05_SPEQULA_METRIC_REGISTRY.csv (registry row only; no worked contract exists in corpus/05a
+  for this metric)
+registry:
+  metric_id: ebitda
+  label: EBITDA
+  category: MANAGEMENT
+  profile: both
+  p0_ask: true
+  p0_statement: true
+  definition: Earnings before interest, tax, depreciation and amortisation. No statutory definition exists.
+  formula: metric.gross_profit - metric.opex
+  unit: INR
+  source_facts:
+  - derived
+  dimensions:
+  - entity
+  - date
+  time_grain: month
+  time_logic: period_sum
+  aggregation: sum
+  comparisons:
+  - mom
+  - yoy
+  - ytd
+  allowed_filters:
+  - entity
+  - period
+  - customer
+  - product
+  - channel
+  - location
+  - cost_centre
+  dependencies:
+  - gross_profit
+  - opex
+  alternative_definitions: Before or after other income; with or without add-backs; under Ind AS lease
+    rentals sit below EBITDA and inflate it relative to AS
+  override_allowed: true
+  governed_by:
+  - D-021
+  - D-022
+  - D-025
+  - D-026
+  unresolved_decisions: []
+  compiles: true
+  version: 1
+  owner: SPEQULA global default, resolved 2026-08-20

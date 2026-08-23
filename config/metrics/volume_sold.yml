@@ -1,0 +1,47 @@
+# Generated from corpus/05 and corpus/05a for metric 'volume_sold'. Do not hand-edit.
+source: corpus/05_SPEQULA_METRIC_REGISTRY.csv (registry row only; no worked contract exists in corpus/05a
+  for this metric)
+registry:
+  metric_id: volume_sold
+  label: Volume sold
+  category: MANAGEMENT
+  profile: manufacturing
+  p0_ask: true
+  p0_statement: false
+  definition: Quantity sold in the declared unit.
+  formula: sum(fact_invoice_line.quantity)
+  unit: declared_unit
+  source_facts:
+  - fact_invoice_line
+  dimensions:
+  - entity
+  - date
+  - customer
+  - product
+  - location
+  time_grain: month
+  time_logic: period_sum
+  aggregation: sum
+  comparisons:
+  - mom
+  - yoy
+  - ytd
+  allowed_filters:
+  - entity
+  - period
+  - customer
+  - product
+  - channel
+  - location
+  - cost_centre
+  dependencies: []
+  alternative_definitions: Unit of measure, capacity basis and rejection point all vary by plant and must
+    be declared
+  override_allowed: true
+  governed_by:
+  - D-041
+  unresolved_decisions:
+  - D-041
+  compiles: false
+  version: 1
+  owner: SPEQULA global default

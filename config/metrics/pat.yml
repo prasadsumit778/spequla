@@ -1,0 +1,43 @@
+# Generated from corpus/05 and corpus/05a for metric 'pat'. Do not hand-edit.
+source: corpus/05_SPEQULA_METRIC_REGISTRY.csv (registry row only; no worked contract exists in corpus/05a
+  for this metric)
+registry:
+  metric_id: pat
+  label: Profit after tax
+  category: STANDARD
+  profile: both
+  p0_ask: true
+  p0_statement: true
+  definition: Profit after tax.
+  formula: metric.pbt - metric.tax_expense
+  unit: INR
+  source_facts:
+  - derived
+  dimensions:
+  - entity
+  - date
+  time_grain: month
+  time_logic: period_sum
+  aggregation: sum
+  comparisons:
+  - mom
+  - yoy
+  - ytd
+  allowed_filters:
+  - entity
+  - period
+  - customer
+  - product
+  - channel
+  - location
+  - cost_centre
+  dependencies:
+  - pbt
+  - tax_expense
+  alternative_definitions: None in common use
+  override_allowed: false
+  governed_by: []
+  unresolved_decisions: []
+  compiles: true
+  version: 1
+  owner: SPEQULA global default

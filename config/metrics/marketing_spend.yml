@@ -1,0 +1,45 @@
+# Generated from corpus/05 and corpus/05a for metric 'marketing_spend'. Do not hand-edit.
+source: corpus/05_SPEQULA_METRIC_REGISTRY.csv (registry row only; no worked contract exists in corpus/05a
+  for this metric)
+registry:
+  metric_id: marketing_spend
+  label: Marketing spend
+  category: MANAGEMENT
+  profile: both
+  p0_ask: true
+  p0_statement: false
+  definition: All advertising and promotion cost. Sits between CM1 and CM2, never inside CM1.
+  formula: gl_class(opex.marketing_advertising)
+  unit: INR
+  source_facts:
+  - fact_gl_entry
+  dimensions:
+  - entity
+  - date
+  - channel
+  - business_unit
+  time_grain: month
+  time_logic: period_sum
+  aggregation: sum
+  comparisons:
+  - mom
+  - yoy
+  - ytd
+  allowed_filters:
+  - entity
+  - period
+  - customer
+  - product
+  - channel
+  - location
+  - cost_centre
+  dependencies: []
+  alternative_definitions: Whether brand and performance marketing are separated. Both sit in the CM1
+    to CM2 step regardless
+  override_allowed: true
+  governed_by:
+  - D-023
+  unresolved_decisions: []
+  compiles: true
+  version: 1
+  owner: SPEQULA global default, resolved 2026-08-20

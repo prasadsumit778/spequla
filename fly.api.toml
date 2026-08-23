@@ -1,0 +1,31 @@
+# Example Fly.io config for the backend, referenced by
+# .github/workflows/deploy.yml's worked-example deploy step. Not wired to a
+# real Fly app until you run `flyctl launch` (or `flyctl apps create`) once
+# and replace `app` below with the name it gives you. See docs/deployment.md.
+#
+# Irrelevant if you pick a different platform -- delete this file and swap
+# the deploy step in .github/workflows/deploy.yml instead.
+
+app = "CHANGE-ME-spequla-api"
+primary_region = "bom"   # Mumbai -- corpus/02 section 7's India data residency requirement
+
+[build]
+  # deploy.yml passes --image explicitly (the already-built, already-tested
+  # GHCR image), so no [build] image/dockerfile directive is needed here.
+
+[env]
+  PORT = "8000"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+[[http_service.checks]]
+  grace_period = "10s"
+  interval = "30s"
+  method = "GET"
+  path = "/health"
+  timeout = "5s"

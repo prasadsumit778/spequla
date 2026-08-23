@@ -1,0 +1,46 @@
+# Generated from corpus/05 and corpus/05a for metric 'ccc'. Do not hand-edit.
+source: corpus/05_SPEQULA_METRIC_REGISTRY.csv (registry row only; no worked contract exists in corpus/05a
+  for this metric)
+registry:
+  metric_id: ccc
+  label: Cash conversion cycle
+  category: CONVENTION
+  profile: both
+  p0_ask: true
+  p0_statement: true
+  definition: Days between paying for inputs and collecting from customers.
+  formula: metric.dso + metric.dio - metric.dpo
+  unit: days
+  source_facts:
+  - derived
+  dimensions:
+  - entity
+  - date
+  time_grain: month
+  time_logic: period_sum
+  aggregation: ratio_of_sums
+  comparisons:
+  - mom
+  - yoy
+  allowed_filters:
+  - entity
+  - period
+  - customer
+  - product
+  - channel
+  - location
+  - cost_centre
+  dependencies:
+  - dso
+  - dio
+  - dpo
+  alternative_definitions: Inherits every variation from its three components
+  override_allowed: true
+  governed_by:
+  - D-028
+  - D-030
+  - D-031
+  unresolved_decisions: []
+  compiles: true
+  version: 1
+  owner: SPEQULA global default, resolved 2026-08-20

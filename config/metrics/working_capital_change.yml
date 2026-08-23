@@ -1,0 +1,42 @@
+# Generated from corpus/05 and corpus/05a for metric 'working_capital_change'. Do not hand-edit.
+source: corpus/05_SPEQULA_METRIC_REGISTRY.csv (registry row only; no worked contract exists in corpus/05a
+  for this metric)
+registry:
+  metric_id: working_capital_change
+  label: Working capital movement
+  category: STANDARD
+  profile: both
+  p0_ask: false
+  p0_statement: true
+  definition: Cash effect of movements in operating working capital. An increase in receivables or inventory
+    is a use of cash.
+  formula: -(delta AR + delta inventory - delta AP - delta other_operating)
+  unit: INR
+  source_facts:
+  - derived
+  dimensions:
+  - entity
+  - date
+  time_grain: month
+  time_logic: period_sum
+  aggregation: sum
+  comparisons:
+  - mom
+  - yoy
+  - ytd
+  allowed_filters:
+  - entity
+  - period
+  - customer
+  - product
+  - channel
+  - location
+  - cost_centre
+  dependencies: []
+  alternative_definitions: None in common use
+  override_allowed: false
+  governed_by: []
+  unresolved_decisions: []
+  compiles: true
+  version: 1
+  owner: SPEQULA global default

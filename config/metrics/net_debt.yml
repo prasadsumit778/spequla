@@ -1,0 +1,44 @@
+# Generated from corpus/05 and corpus/05a for metric 'net_debt'. Do not hand-edit.
+source: corpus/05_SPEQULA_METRIC_REGISTRY.csv (registry row only; no worked contract exists in corpus/05a
+  for this metric)
+registry:
+  metric_id: net_debt
+  label: Net debt
+  category: MANAGEMENT
+  profile: both
+  p0_ask: true
+  p0_statement: true
+  definition: Debt less free cash.
+  formula: metric.debt - metric.cash
+  unit: INR
+  source_facts:
+  - derived
+  dimensions:
+  - entity
+  - date
+  time_grain: month
+  time_logic: period_end
+  aggregation: last_value
+  comparisons:
+  - mom
+  - yoy
+  allowed_filters:
+  - entity
+  - period
+  - customer
+  - product
+  - channel
+  - location
+  - cost_centre
+  dependencies:
+  - debt
+  - cash
+  alternative_definitions: Whether restricted cash is deducted
+  override_allowed: true
+  governed_by:
+  - D-034
+  - D-035
+  unresolved_decisions: []
+  compiles: true
+  version: 1
+  owner: SPEQULA global default, resolved 2026-08-20

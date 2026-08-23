@@ -1,0 +1,118 @@
+# Generated from corpus/05 and corpus/05a for metric 'dso'. Do not hand-edit.
+source: corpus/05a_SPEQULA_METRIC_CONTRACTS.yml (worked contract)
+registry:
+  metric_id: dso
+  label: Days sales outstanding
+  category: CONVENTION
+  profile: both
+  p0_ask: true
+  p0_statement: true
+  definition: How long customers take to pay.
+  formula: metric.accounts_receivable / metric.[declared_revenue_base] * days_in_period
+  unit: days
+  source_facts:
+  - derived
+  dimensions:
+  - entity
+  - date
+  time_grain: month
+  time_logic: period_sum
+  aggregation: ratio_of_sums
+  comparisons:
+  - mom
+  - yoy
+  allowed_filters:
+  - entity
+  - period
+  - customer
+  - product
+  - channel
+  - location
+  - cost_centre
+  dependencies:
+  - accounts_receivable
+  - net_revenue
+  alternative_definitions: Period-end vs average AR; gross vs net revenue; 365 vs 360 days; countback
+    method
+  override_allowed: true
+  governed_by:
+  - D-028
+  unresolved_decisions: []
+  compiles: true
+  version: 1
+  owner: SPEQULA global default, resolved 2026-08-20
+contract:
+  version: 1
+  label: Days sales outstanding
+  category: CONVENTION
+  definition: How long customers take to pay, expressed in days.
+  formula: metric.accounts_receivable / metric.[revenue_base] * days_basis
+  parameters:
+    ar_basis:
+      options:
+      - period_end
+      - average_of_opening_and_closing
+      default: period_end
+      governed_by: D-028
+      note: 'Average smooths seasonal receivable spikes and is technically better. Period-end is what
+        most Indian promoters compute mentally. Match the promoter, not the textbook.
+
+        '
+    revenue_base:
+      options:
+      - gross_revenue
+      - net_revenue
+      default: net_revenue
+      governed_by: D-028
+    days_basis:
+      options:
+      - 365
+      - 360
+      default: 365
+      governed_by: D-028
+    include_unbilled:
+      options:
+      - true
+      - false
+      default: false
+      governed_by: D-029
+    include_marketplace_settlement:
+      options:
+      - true
+      - false
+      default: false
+      governed_by: D-033
+      applies_to_profile: consumer
+      note: 'Marketplace settlement receivable ages on a platform payout cycle, not on customer credit
+        terms. Mixing it into trade AR makes DSO meaningless for a consumer brand.
+
+        '
+    net_bill_discounting:
+      options:
+      - true
+      - false
+      default: false
+      governed_by: D-036
+      note: 'Setting this true reduces AR by discounted bills, which improves DSO and hides leverage at
+        the same time. The default is false because the honest presentation keeps the receivable and shows
+        the borrowing.
+
+        '
+  aggregation: ratio_of_sums
+  time_logic: period_end
+  unit: days
+  source_facts:
+  - derived
+  dependencies:
+  - accounts_receivable
+  - net_revenue
+  dimensions:
+  - entity
+  - date
+  override_scope: company
+  governed_by:
+  - D-028
+  - D-029
+  - D-033
+  - D-036
+  approved_by: pending

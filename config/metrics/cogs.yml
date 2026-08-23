@@ -1,0 +1,62 @@
+# Generated from corpus/05 and corpus/05a for metric 'cogs'. Do not hand-edit.
+source: corpus/05_SPEQULA_METRIC_REGISTRY.csv (registry row only; no worked contract exists in corpus/05a
+  for this metric)
+registry:
+  metric_id: cogs
+  label: Cost of goods sold
+  category: CONVENTION
+  profile: both
+  p0_ask: true
+  p0_statement: true
+  definition: Cost of goods sold or services delivered, per the declared account class list.
+  formula: opening_inventory + purchases + direct_conversion_cost - closing_inventory, or gl_class(cogs.*)
+  unit: INR
+  source_facts:
+  - fact_gl_entry
+  - fact_inventory_position
+  dimensions:
+  - entity
+  - date
+  - customer
+  - product
+  - channel
+  - location
+  time_grain: month
+  time_logic: period_sum
+  aggregation: sum
+  comparisons:
+  - mom
+  - yoy
+  - ytd
+  allowed_filters:
+  - entity
+  - period
+  - customer
+  - product
+  - channel
+  - location
+  - cost_centre
+  dependencies: []
+  alternative_definitions: 'Boundary items: freight outward, freight inward, packing, power and fuel,
+    direct labour, gateway fees, warehousing, inventory write-down. Standard vs actual costing'
+  override_allowed: true
+  governed_by:
+  - D-011
+  - D-012
+  - D-013
+  - D-014
+  - D-015
+  - D-016
+  - D-017
+  - D-018
+  - D-019
+  - D-020
+  unresolved_decisions:
+  - D-012
+  - D-015
+  - D-016
+  - D-017
+  - D-018
+  compiles: false
+  version: 1
+  owner: SPEQULA global default

@@ -1,0 +1,18 @@
+-- Correction: db/migrations/shared/0001_tenant_registry.sql already
+-- creates model_reachable (CREATE ROLE ... NOLOGIN, guarded by IF NOT
+-- EXISTS) -- an earlier pass through this codebase claimed the role was
+-- "never created anywhere," which was wrong; that claim came from grepping
+-- filenames that mentioned model_reachable without actually opening every
+-- one of them, and 0001_tenant_registry.sql was on that list unexamined.
+-- What was genuinely missing, confirmed by querying pg_auth_members
+-- directly against the live database, is narrower: the connecting user
+-- (postgres, via Supabase's session pooler) was a MEMBER of model_reachable
+-- but without the SET option, which Postgres 16+ tracks separately from
+-- plain membership -- so `SET ROLE model_reachable` failed with
+-- "permission denied to set role" even though the role existed and the
+-- REVOKE/GRANT statements referencing it throughout every other migration
+-- had been applying successfully all along.
+--
+-- Numbered 0000 so it applies before anything else references the role,
+-- consistent with 0001_tenant_registry.sql's own ordering intent.
+GRANT model_reachable TO CURRENT_USER WITH SET TRUE;

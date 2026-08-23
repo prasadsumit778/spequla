@@ -1,0 +1,74 @@
+# Generated from corpus/05 and corpus/05a for metric 'operating_cost_cm1'. Do not hand-edit.
+source: corpus/05a_SPEQULA_METRIC_CONTRACTS.yml (worked contract)
+registry:
+  metric_id: operating_cost_cm1
+  label: Operating cost (to CM1)
+  category: MANAGEMENT
+  profile: consumer
+  p0_ask: true
+  p0_statement: false
+  definition: 'Costs deducted from gross margin to reach CM1: servicing, fulfilment, offline manpower
+    and rent. Marketing is excluded by design.'
+  formula: gl_class(cogs.fulfilment) + servicing_cost + offline_manpower + offline_rent
+  unit: INR
+  source_facts:
+  - fact_gl_entry
+  dimensions:
+  - entity
+  - date
+  - channel
+  - business_unit
+  time_grain: month
+  time_logic: period_sum
+  aggregation: sum
+  comparisons:
+  - mom
+  - yoy
+  - ytd
+  allowed_filters:
+  - entity
+  - period
+  - customer
+  - product
+  - channel
+  - location
+  - cost_centre
+  dependencies: []
+  alternative_definitions: None in common use
+  override_allowed: true
+  governed_by:
+  - D-060
+  unresolved_decisions: []
+  compiles: true
+  version: 1
+  owner: SPEQULA global default, resolved 2026-08-20
+contract:
+  version: 1
+  label: Operating cost (to CM1)
+  category: MANAGEMENT
+  profile: consumer
+  definition: 'Costs deducted from gross margin to reach CM1. Marketing is excluded by design, because
+    the whole purpose of the CM1 rung is to isolate economics before marketing.
+
+    '
+  formula: sum(declared_cm1_costs)
+  declared_cm1_costs:
+  - id: servicing_cost
+    included: true
+  - id: fulfilment
+    included: true
+    note: 'D-020 was resolved against its own suggested default here. The suggestion put fulfilment in
+      COGS. It sits above CM1 instead, because putting it in COGS would double-count it and empty this
+      rung of meaning. Manufacturing, which has no ladder, keeps warehousing in COGS.
+
+      '
+  - id: offline_manpower
+    included: true
+  - id: offline_rent_and_operational
+    included: true
+  - id: marketing
+    included: false
+  governed_by:
+  - D-060
+  - D-020
+  approved_by: human

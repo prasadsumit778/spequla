@@ -1,0 +1,55 @@
+# Generated from corpus/05 and corpus/05a for metric 'gross_revenue'. Do not hand-edit.
+source: corpus/05_SPEQULA_METRIC_REGISTRY.csv (registry row only; no worked contract exists in corpus/05a
+  for this metric)
+registry:
+  metric_id: gross_revenue
+  label: Gross revenue
+  category: CONVENTION
+  profile: both
+  p0_ask: true
+  p0_statement: true
+  definition: Invoiced value of goods and services before any customer deduction, excluding indirect tax.
+  formula: sum(fact_invoice_line.taxable_value where not is_credit_note) + gl_class(revenue.*)
+  unit: INR
+  source_facts:
+  - fact_invoice_line
+  - fact_gl_entry
+  dimensions:
+  - entity
+  - date
+  - customer
+  - product
+  - channel
+  - location
+  time_grain: month
+  time_logic: period_sum
+  aggregation: sum
+  comparisons:
+  - mom
+  - yoy
+  - ytd
+  allowed_filters:
+  - entity
+  - period
+  - customer
+  - product
+  - channel
+  - location
+  - cost_centre
+  dependencies: []
+  alternative_definitions: GST-inclusive vs exclusive; whether scrap and job work income are revenue or
+    a cost credit; whether shipping recovered is revenue
+  override_allowed: true
+  governed_by:
+  - D-001
+  - D-002
+  - D-005
+  - D-008
+  - D-009
+  - D-010
+  unresolved_decisions:
+  - D-001
+  - D-002
+  compiles: false
+  version: 1
+  owner: SPEQULA global default

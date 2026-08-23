@@ -1,0 +1,334 @@
+# SPEQULA METRIC CONTRACTS
+# File 05a of 12. Companion to 05_SPEQULA_METRIC_REGISTRY.csv.
+#
+# The CSV is the inventory. This file is the executable form. Four contracts are worked in
+# full to fix the schema; the remaining 47 follow the same shape and are generated from
+# the CSV plus the resolved decisions in file 00.
+#
+# HARD RULE: no metric formula appears anywhere in application code. The compiler reads
+# these contracts and emits SQL. A formula in a service, a prompt or a dashboard component
+# is a defect, not a shortcut.
+
+# ============================================================================
+# SCHEMA
+# ============================================================================
+_schema:
+  metric_id:        "snake_case, unique, stable forever. Never renamed, only superseded."
+  version:          "integer. Any change to formula, deduction list or aggregation increments it."
+  category:         "STANDARD | CONVENTION | MANAGEMENT. See file 03 section 1."
+  formula:          "References metric.* only. Never a table or column name."
+  source_facts:     "Canonical tables the compiler is permitted to touch for this metric."
+  aggregation:      "sum | ratio_of_sums | last_value | count_distinct."
+  time_logic:       "period_sum for flows, period_end for stocks."
+  dimensions:       "The only dimensions this metric may be sliced by. Anything else is rejected."
+  requires:         "Preconditions checked before execution. A failure returns a reason, not a number."
+  override_scope:   "none | company | entity. Where a client may differ from the global default."
+  governed_by:      "Decision IDs from file 00. Unresolved ones block compilation."
+  approved_by:      "human | pending. A metric is never served on an unapproved contract."
+
+# ============================================================================
+# 1. net_revenue  -- the metric everything else depends on
+# ============================================================================
+net_revenue:
+  version: 1
+  label: "Net revenue"
+  category: CONVENTION
+  definition: >
+    Revenue after all declared customer-facing deductions. This is the denominator for
+    every margin ratio in the system, which is why the deduction list is declared once
+    per company and frozen rather than assumed.
+
+  formula: "metric.gross_revenue - sum(declared_deductions)"
+
+  declared_deductions:
+    # Global default. Each item is independently switchable per company.
+    - id: sales_returns
+      included: true
+      source_class: contra_revenue.sales_returns
+      governed_by: D-003
+    - id: trade_discount
+      included: true
+      source_class: contra_revenue.trade_discount
+      governed_by: D-003
+    - id: cash_discount
+      included: true
+      source_class: contra_revenue.cash_discount
+      governed_by: D-003
+    - id: rate_difference
+      included: true
+      source_class: contra_revenue.rate_difference
+      governed_by: D-003
+    - id: scheme_rebate
+      included: false          # global default: treated as opex, not a revenue deduction
+      source_class: contra_revenue.scheme_rebate
+      governed_by: D-003
+    - id: marketplace_commission
+      included: false          # global default: shown as a cost line above gross profit
+      source_class: contra_revenue.commission_marketplace
+      governed_by: D-004
+      applies_to_profile: consumer
+    - id: shipping_recovered
+      included: false          # global default: contra to freight cost, not a revenue deduction
+      source_class: contra_revenue.shipping_recovered
+      governed_by: D-005
+      applies_to_profile: consumer
+
+  source_facts: [fact_invoice_line, fact_gl_entry]
+  dimensions: [entity, date, customer, product, channel, location]
+  aggregation: sum
+  time_logic: period_sum
+  currency: base            # INR. Converted once at staging, never here.
+
+  requires:
+    - check: period_has_approved_mapping
+      on_fail: "Metrics are unavailable for this period until the account mapping is approved."
+    - check: unmapped_value_below_threshold
+      threshold_governed_by: D-053
+      on_fail: "Serve with a badge stating the unmapped rupee value, or block. Per D-053."
+    - check: gst_treatment_declared
+      governed_by: D-001
+      on_fail: "BLOCKING. Without knowing whether sales ledgers are GST-inclusive, this metric
+                is wrong by the GST rate and nothing downstream detects it."
+
+  override_scope: company
+  governed_by: [D-001, D-002, D-003, D-004, D-005, D-006, D-007, D-008, D-009, D-010]
+  approved_by: pending      # cannot be approved until the decisions above are resolved
+  owner: "SPEQULA global default"
+
+# ============================================================================
+# 2. gross_margin_pct  -- the ratio_of_sums rule, made concrete
+# ============================================================================
+gross_margin_pct:
+  version: 1
+  label: "Gross margin %"
+  category: STANDARD
+  definition: "Gross profit as a proportion of net revenue."
+
+  formula: "metric.gross_profit / metric.net_revenue"
+
+  aggregation: ratio_of_sums
+  # NOT average_of_ratios. Quarterly gross margin is quarterly gross profit over quarterly
+  # net revenue. It is not the mean of three monthly percentages, and the two differ
+  # whenever monthly revenue is uneven, which it always is. Declaring this in the contract
+  # removes an entire class of quiet errors that no reviewer catches by eye.
+
+  compiled_shape: |
+    SELECT SUM(gross_profit) / NULLIF(SUM(net_revenue), 0)
+    -- never: AVG(gross_profit / net_revenue)
+
+  guards:
+    - zero_denominator: "Return undefined with a stated reason. Never zero, never null,
+                         never a divide-by-zero error surfaced to the user."
+    - sign_flip: "A negative net revenue in any period makes this metric meaningless.
+                  Raise an exception rather than displaying a negative percentage."
+
+  source_facts: [derived]
+  dependencies: [gross_profit, net_revenue]
+  dimensions: [entity, date, customer, product, channel, location]
+  time_logic: period_sum
+  unit: fraction            # stored as 0.394, rendered as 39.4%. Basis points computed, never stored.
+  override_scope: none      # the formula is arithmetic; all variation lives in its inputs
+  governed_by: []
+  approved_by: human
+
+# ============================================================================
+# 3. dso  -- the metric with six defensible definitions
+# ============================================================================
+dso:
+  version: 1
+  label: "Days sales outstanding"
+  category: CONVENTION
+  definition: "How long customers take to pay, expressed in days."
+
+  formula: "metric.accounts_receivable / metric.[revenue_base] * days_basis"
+
+  parameters:
+    ar_basis:
+      options: [period_end, average_of_opening_and_closing]
+      default: period_end
+      governed_by: D-028
+      note: >
+        Average smooths seasonal receivable spikes and is technically better. Period-end is
+        what most Indian promoters compute mentally. Match the promoter, not the textbook.
+    revenue_base:
+      options: [gross_revenue, net_revenue]
+      default: net_revenue
+      governed_by: D-028
+    days_basis:
+      options: [365, 360]
+      default: 365
+      governed_by: D-028
+    include_unbilled:
+      options: [true, false]
+      default: false
+      governed_by: D-029
+    include_marketplace_settlement:
+      options: [true, false]
+      default: false
+      governed_by: D-033
+      applies_to_profile: consumer
+      note: >
+        Marketplace settlement receivable ages on a platform payout cycle, not on customer
+        credit terms. Mixing it into trade AR makes DSO meaningless for a consumer brand.
+    net_bill_discounting:
+      options: [true, false]
+      default: false
+      governed_by: D-036
+      note: >
+        Setting this true reduces AR by discounted bills, which improves DSO and hides
+        leverage at the same time. The default is false because the honest presentation
+        keeps the receivable and shows the borrowing.
+
+  # Six binary or two-way parameters. The combinations produce visibly different numbers
+  # on identical books. The resolved combination is stamped on every displayed value and
+  # shown on hover, so the client can always see which definition produced the figure.
+
+  aggregation: ratio_of_sums
+  time_logic: period_end
+  unit: days
+  source_facts: [derived]
+  dependencies: [accounts_receivable, net_revenue]
+  dimensions: [entity, date]
+  override_scope: company
+  governed_by: [D-028, D-029, D-033, D-036]
+  approved_by: pending
+
+# ============================================================================
+# 4. cm1 and cm2  -- the ladder that replaced contribution_margin
+# ============================================================================
+# RESOLVED 2026-08-20. A single contribution_margin metric no longer exists (D-048).
+# Modelled on a real consumer MIS. CM1 answers whether unit economics work before
+# marketing; CM2 answers whether marketing pays back. A business can have healthy CM1
+# and deeply negative CM2, and those are different problems with different fixes.
+# Collapsing them into one number destroys the distinction the statement exists to make.
+
+operating_cost_cm1:
+  version: 1
+  label: "Operating cost (to CM1)"
+  category: MANAGEMENT
+  profile: consumer
+  definition: >
+    Costs deducted from gross margin to reach CM1. Marketing is excluded by design,
+    because the whole purpose of the CM1 rung is to isolate economics before marketing.
+  formula: "sum(declared_cm1_costs)"
+  declared_cm1_costs:
+    - id: servicing_cost      # online order servicing
+      included: true
+    - id: fulfilment          # pick, pack, warehouse
+      included: true
+      note: >
+        D-020 was resolved against its own suggested default here. The suggestion put
+        fulfilment in COGS. It sits above CM1 instead, because putting it in COGS would
+        double-count it and empty this rung of meaning. Manufacturing, which has no
+        ladder, keeps warehousing in COGS.
+    - id: offline_manpower
+      included: true
+    - id: offline_rent_and_operational
+      included: true
+    - id: marketing
+      included: false         # NEVER. This is the CM1 to CM2 step
+  governed_by: [D-060, D-020]
+  approved_by: human
+
+cm1:
+  version: 1
+  label: "CM1"
+  category: MANAGEMENT
+  profile: consumer
+  formula: "metric.gross_profit - metric.operating_cost_cm1"
+  dependencies: [gross_profit, operating_cost_cm1]
+  dimensions: [entity, date, channel, product, business_unit]
+  aggregation: sum
+  time_logic: period_sum
+  unit: INR
+  override_scope: company
+  governed_by: [D-060]
+  approved_by: human
+
+cm2:
+  version: 1
+  label: "CM2"
+  category: MANAGEMENT
+  profile: consumer
+  definition: "CM1 less all marketing. The headline unit economics figure."
+  formula: "metric.cm1 - metric.marketing_spend"
+  dependencies: [cm1, marketing_spend]
+  dimensions: [entity, date, channel, product, business_unit]
+  aggregation: sum
+  unit: INR
+  marketing_scope:
+    - performance_marketing: included
+    - brand_marketing: included
+    - acquisition_vs_retention: "split where the order file tags order_type"
+  governed_by: [D-023]
+  approved_by: human
+
+corporate_overhead:
+  version: 1
+  label: "Corporate overhead"
+  category: MANAGEMENT
+  definition: "Unallocated central cost between CM2 and EBITDA."
+  formula: "sum(declared_central_classes)"
+  allocation:
+    allocated: false
+    rule: >
+      D-062. Never allocated to a business unit, channel or product. Allocation changes
+      which unit looks profitable and is a policy rather than a calculation. Refusing to
+      allocate is the honest answer and is what the reference MIS does.
+  dimensions: [entity, date]
+  governed_by: [D-062]
+  approved_by: human
+
+gmv:
+  version: 1
+  label: "GMV"
+  category: MANAGEMENT
+  profile: consumer
+  definition: "Customer-facing transacted value, inclusive of GST. Top line of the ladder."
+  formula: "sum(fact_channel_order_line.gross_amount)"
+  revenue_model_split:
+    marketplace:
+      gmv_is: "a volume statistic. The inventory belongs to the seller"
+      revenue_is: "commission_earned + advertising_earned + platform_fee_earned"
+      cogs: none
+    buyout:
+      gmv_is: "the revenue base"
+      revenue_is: "gmv - discount - gst"
+      cogs: "cost of goods sold"
+  hard_rule: >
+    Never sum GMV across revenue models and present it as revenue. Where a combined GMV
+    figure is shown, the split must be stated on the same output.
+  governed_by: [D-061]
+  approved_by: human
+
+# ============================================================================
+# OVERRIDE RESOLUTION
+# ============================================================================
+_resolution_order:
+  # Evaluated at compile time, not in a prompt. The resolved version id is stamped on
+  # every answer, every chart and every line of every report.
+  - entity_override      # rare in P0, single-entity pilots
+  - company_override     # where the accounting policy conversation produced a difference
+  - industry_pack        # not present in P0. Reserved so its later arrival changes nothing
+  - global_default       # this file
+
+_change_control:
+  rule: >
+    A metric definition change is a versioned event with an owner, an effective date and a
+    human approval. Old reports keep rendering with the version they were built on. Without
+    this, last quarter's pack silently changes and nobody can explain why.
+  requires_approval_from: [client_finance_lead, spequla_analyst]
+  effect_on_existing_reports: none
+  effect_on_new_queries: immediate
+
+_compilation_gate:
+  rule: >
+    A metric whose governed_by list contains an unresolved decision from file 00 does not
+    compile. It is not served with a default. The Ask surface returns: "This metric is not
+    yet configured for your company," and names the decision.
+  currently_blocked_count: 8
+  reason: >
+    8 of 61 registry entries reference an unresolved decision. All eight are blocked by
+    per-company items (D-001, D-002, D-006, D-012, D-015, D-016, D-017, D-018, D-041,
+    D-042) that are answered in the accounting policy conversation at onboarding, not
+    before the build.

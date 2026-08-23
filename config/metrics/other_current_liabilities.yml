@@ -1,0 +1,41 @@
+# Generated from corpus/05 and corpus/05a for metric 'other_current_liabilities'. Do not hand-edit.
+source: corpus/05_SPEQULA_METRIC_REGISTRY.csv (registry row only; no worked contract exists in corpus/05a
+  for this metric)
+registry:
+  metric_id: other_current_liabilities
+  label: Other current liabilities
+  category: STANDARD
+  profile: both
+  p0_ask: false
+  p0_statement: true
+  definition: Statutory dues, employee payables, provisions and customer advances.
+  formula: gl_class(liability.statutory_payable|liability.employee_payable|liability.provision|liability.advance_customer)
+  unit: INR
+  source_facts:
+  - fact_gl_entry
+  dimensions:
+  - entity
+  - date
+  time_grain: month
+  time_logic: period_end
+  aggregation: last_value
+  comparisons:
+  - mom
+  - yoy
+  allowed_filters:
+  - entity
+  - period
+  - customer
+  - product
+  - channel
+  - location
+  - cost_centre
+  dependencies: []
+  alternative_definitions: None in common use
+  override_allowed: false
+  governed_by:
+  - D-032
+  unresolved_decisions: []
+  compiles: true
+  version: 1
+  owner: SPEQULA global default, resolved 2026-08-20

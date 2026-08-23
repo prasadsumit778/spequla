@@ -1,0 +1,414 @@
+# Generated from corpus/06a_SPEQULA_COA_MAPPING_TEMPLATE.xlsx's Canonical Classes
+# tab (corpus/06's own named companion file). Do not hand-edit.
+# PROVISIONAL, version 0 -- per corpus/06 section 3's own heading. Revise against a
+# real chart of accounts before freezing for company two.
+- class: revenue.product_sales
+  statement_section: pnl
+  statement_line: gross_revenue
+  judgement_class: false
+  notes: Domestic sale of goods
+- class: revenue.service_income
+  statement_section: pnl
+  statement_line: gross_revenue
+  judgement_class: false
+  notes: null
+- class: revenue.job_work
+  statement_section: pnl
+  statement_line: gross_revenue
+  judgement_class: false
+  notes: 'Job work income received; Decision: D-010; Profile: Manufacturing'
+- class: revenue.export_sales
+  statement_section: pnl
+  statement_line: gross_revenue
+  judgement_class: false
+  notes: 'Separate: currency and incentive treatment differ; Decision: D-008'
+- class: revenue.scrap_sales
+  statement_section: pnl
+  statement_line: gross_revenue
+  judgement_class: false
+  notes: 'May instead credit COGS; Decision: D-009; Profile: Manufacturing'
+- class: revenue.other_operating
+  statement_section: pnl
+  statement_line: gross_revenue
+  judgement_class: false
+  notes: Freight and packing recovered
+- class: contra_revenue.sales_returns
+  statement_section: pnl
+  statement_line: returns
+  judgement_class: false
+  notes: 'Decision: D-047'
+- class: contra_revenue.trade_discount
+  statement_section: pnl
+  statement_line: discounts
+  judgement_class: false
+  notes: 'Decision: D-003'
+- class: contra_revenue.cash_discount
+  statement_section: pnl
+  statement_line: discounts
+  judgement_class: false
+  notes: 'Decision: D-003'
+- class: contra_revenue.rate_difference
+  statement_section: pnl
+  statement_line: discounts
+  judgement_class: false
+  notes: 'Common in distribution; Decision: D-003'
+- class: contra_revenue.scheme_rebate
+  statement_section: pnl
+  statement_line: discounts
+  judgement_class: false
+  notes: 'May instead be opex; Decision: D-003'
+- class: contra_revenue.commission_marketplace
+  statement_section: pnl
+  statement_line: net_revenue
+  judgement_class: false
+  notes: 'Netted or shown as cost; Decision: D-004; Profile: Consumer'
+- class: contra_revenue.shipping_recovered
+  statement_section: pnl
+  statement_line: net_revenue
+  judgement_class: false
+  notes: 'Decision: D-005; Profile: Consumer'
+- class: cogs.raw_material
+  statement_section: pnl
+  statement_line: cogs
+  judgement_class: false
+  notes: null
+- class: cogs.packing_material
+  statement_section: pnl
+  statement_line: cogs
+  judgement_class: false
+  notes: 'Primary vs secondary may split; Decision: D-013'
+- class: cogs.stores_consumables
+  statement_section: pnl
+  statement_line: cogs
+  judgement_class: false
+  notes: 'Profile: Manufacturing'
+- class: cogs.direct_labour
+  statement_section: pnl
+  statement_line: cogs
+  judgement_class: false
+  notes: 'Needs a cost centre split that often does not exist; Decision: D-016; Profile: Manufacturing'
+- class: cogs.power_fuel
+  statement_section: pnl
+  statement_line: cogs
+  judgement_class: false
+  notes: 'Decision: D-015; Profile: Manufacturing'
+- class: cogs.job_work_charges
+  statement_section: pnl
+  statement_line: cogs
+  judgement_class: false
+  notes: 'Subcontracting paid out; Profile: Manufacturing'
+- class: cogs.freight_inward
+  statement_section: pnl
+  statement_line: cogs
+  judgement_class: false
+  notes: 'Capitalised into inventory or expensed; Decision: D-012'
+- class: cogs.freight_outward
+  statement_section: pnl
+  statement_line: cogs
+  judgement_class: false
+  notes: 'The most contested line in the taxonomy; Decision: D-011'
+- class: cogs.fulfilment
+  statement_section: pnl
+  statement_line: cogs
+  judgement_class: false
+  notes: 'Warehousing and pick-pack; Decision: D-020; Profile: Consumer'
+- class: cogs.payment_fees
+  statement_section: pnl
+  statement_line: cogs
+  judgement_class: false
+  notes: 'Gateway and COD; Decision: D-014; Profile: Consumer'
+- class: cogs.stock_adjustment
+  statement_section: pnl
+  statement_line: cogs
+  judgement_class: false
+  notes: 'Physical vs book, write-downs; Decision: D-019'
+- class: cogs.absorption_variance
+  statement_section: pnl
+  statement_line: cogs
+  judgement_class: true
+  notes: 'JUDGEMENT CLASS; Decision: D-017; Profile: Manufacturing'
+- class: opex.employee_cost
+  statement_section: pnl
+  statement_line: opex
+  judgement_class: false
+  notes: null
+- class: opex.rent
+  statement_section: pnl
+  statement_line: opex
+  judgement_class: false
+  notes: 'Decision: D-026'
+- class: opex.repairs_maintenance
+  statement_section: pnl
+  statement_line: opex
+  judgement_class: false
+  notes: null
+- class: opex.travel
+  statement_section: pnl
+  statement_line: opex
+  judgement_class: false
+  notes: null
+- class: opex.professional_fees
+  statement_section: pnl
+  statement_line: opex
+  judgement_class: false
+  notes: null
+- class: opex.marketing_advertising
+  statement_section: pnl
+  statement_line: opex
+  judgement_class: false
+  notes: 'Variable or fixed for consumer; Decision: D-023'
+- class: opex.selling_distribution
+  statement_section: pnl
+  statement_line: opex
+  judgement_class: false
+  notes: null
+- class: opex.admin_general
+  statement_section: pnl
+  statement_line: opex
+  judgement_class: false
+  notes: null
+- class: opex.insurance
+  statement_section: pnl
+  statement_line: opex
+  judgement_class: false
+  notes: null
+- class: opex.rates_taxes
+  statement_section: pnl
+  statement_line: opex
+  judgement_class: false
+  notes: null
+- class: opex.provision_baddebt
+  statement_section: pnl
+  statement_line: opex
+  judgement_class: false
+  notes: null
+- class: opex.csr_donation
+  statement_section: pnl
+  statement_line: opex
+  judgement_class: false
+  notes: 'Decision: D-027'
+- class: opex.owner_remuneration
+  statement_section: pnl
+  statement_line: opex
+  judgement_class: true
+  notes: 'JUDGEMENT CLASS. Exists so add-backs are computable; Decision: D-021'
+- class: opex.related_party_charges
+  statement_section: pnl
+  statement_line: opex
+  judgement_class: true
+  notes: 'JUDGEMENT CLASS; Decision: D-022'
+- class: opex.other
+  statement_section: pnl
+  statement_line: opex
+  judgement_class: false
+  notes: null
+- class: da.depreciation
+  statement_section: pnl
+  statement_line: da
+  judgement_class: false
+  notes: null
+- class: da.amortisation
+  statement_section: pnl
+  statement_line: da
+  judgement_class: false
+  notes: null
+- class: finance_cost.interest_debt
+  statement_section: pnl
+  statement_line: interest_expense
+  judgement_class: false
+  notes: null
+- class: finance_cost.bank_charges
+  statement_section: pnl
+  statement_line: interest_expense
+  judgement_class: false
+  notes: null
+- class: finance_cost.interest_other
+  statement_section: pnl
+  statement_line: interest_expense
+  judgement_class: false
+  notes: null
+- class: other_income.interest_income
+  statement_section: pnl
+  statement_line: other_income
+  judgement_class: false
+  notes: 'Decision: D-025'
+- class: other_income.fx_gain
+  statement_section: pnl
+  statement_line: other_income
+  judgement_class: false
+  notes: 'Decision: D-008'
+- class: other_income.misc_income
+  statement_section: pnl
+  statement_line: other_income
+  judgement_class: false
+  notes: 'Decision: D-025'
+- class: tax.current
+  statement_section: pnl
+  statement_line: tax_expense
+  judgement_class: false
+  notes: null
+- class: tax.deferred
+  statement_section: pnl
+  statement_line: tax_expense
+  judgement_class: false
+  notes: null
+- class: exceptional.one_off
+  statement_section: pnl
+  statement_line: exceptional
+  judgement_class: true
+  notes: 'JUDGEMENT CLASS. Never auto-accepted; Decision: D-024'
+- class: asset.cash_bank
+  statement_section: bs
+  statement_line: cash
+  judgement_class: false
+  notes: 'Decision: D-034'
+- class: asset.cash_restricted
+  statement_section: bs
+  statement_line: restricted_cash
+  judgement_class: false
+  notes: 'Margin money, lien-marked deposits; Decision: D-034'
+- class: asset.trade_receivable
+  statement_section: bs
+  statement_line: accounts_receivable
+  judgement_class: false
+  notes: 'Decision: D-029'
+- class: asset.inventory_rm
+  statement_section: bs
+  statement_line: inventory
+  judgement_class: false
+  notes: 'Decision: D-018; Profile: Manufacturing'
+- class: asset.inventory_wip
+  statement_section: bs
+  statement_line: inventory
+  judgement_class: false
+  notes: 'Decision: D-044; Profile: Manufacturing'
+- class: asset.inventory_fg
+  statement_section: bs
+  statement_line: inventory
+  judgement_class: false
+  notes: 'Decision: D-018'
+- class: asset.inventory_packing_stores
+  statement_section: bs
+  statement_line: inventory
+  judgement_class: false
+  notes: 'Profile: Manufacturing'
+- class: asset.advance_supplier
+  statement_section: bs
+  statement_line: other_current_assets
+  judgement_class: false
+  notes: null
+- class: asset.prepaid
+  statement_section: bs
+  statement_line: other_current_assets
+  judgement_class: false
+  notes: null
+- class: asset.statutory_receivable
+  statement_section: bs
+  statement_line: other_current_assets
+  judgement_class: false
+  notes: GST input credit, TDS receivable
+- class: asset.loans_advances
+  statement_section: bs
+  statement_line: other_current_assets
+  judgement_class: false
+  notes: null
+- class: asset.deposit
+  statement_section: bs
+  statement_line: other_current_assets
+  judgement_class: false
+  notes: null
+- class: asset.investment
+  statement_section: bs
+  statement_line: other_current_assets
+  judgement_class: false
+  notes: null
+- class: asset.fixed_asset_gross
+  statement_section: bs
+  statement_line: fixed_assets_net
+  judgement_class: false
+  notes: null
+- class: asset.accumulated_depreciation
+  statement_section: bs
+  statement_line: fixed_assets_net
+  judgement_class: false
+  notes: null
+- class: asset.capital_wip
+  statement_section: bs
+  statement_line: fixed_assets_net
+  judgement_class: false
+  notes: 'Decision: D-037'
+- class: liability.trade_payable
+  statement_section: bs
+  statement_line: accounts_payable
+  judgement_class: false
+  notes: null
+- class: liability.advance_customer
+  statement_section: bs
+  statement_line: other_current_liabilities
+  judgement_class: false
+  notes: 'Decision: D-032'
+- class: liability.statutory_payable
+  statement_section: bs
+  statement_line: other_current_liabilities
+  judgement_class: false
+  notes: null
+- class: liability.employee_payable
+  statement_section: bs
+  statement_line: other_current_liabilities
+  judgement_class: false
+  notes: null
+- class: liability.provision
+  statement_section: bs
+  statement_line: other_current_liabilities
+  judgement_class: false
+  notes: null
+- class: liability.debt_term
+  statement_section: bs
+  statement_line: debt
+  judgement_class: false
+  notes: 'Decision: D-035'
+- class: liability.debt_working_capital
+  statement_section: bs
+  statement_line: debt
+  judgement_class: false
+  notes: 'CC and OD; Decision: D-035'
+- class: liability.debt_current_maturity
+  statement_section: bs
+  statement_line: debt
+  judgement_class: false
+  notes: 'Decision: D-035'
+- class: liability.debt_related_party
+  statement_section: bs
+  statement_line: debt
+  judgement_class: true
+  notes: 'JUDGEMENT CLASS; Decision: D-035'
+- class: liability.bill_discounting
+  statement_section: bs
+  statement_line: debt
+  judgement_class: true
+  notes: 'JUDGEMENT CLASS. Separate so D-036 can change without remapping; Decision: D-036'
+- class: liability.lease
+  statement_section: bs
+  statement_line: debt
+  judgement_class: false
+  notes: 'Blocked by VERIFY[V-001]; Decision: D-026'
+- class: liability.other_current
+  statement_section: bs
+  statement_line: other_current_liabilities
+  judgement_class: false
+  notes: null
+- class: equity.share_capital
+  statement_section: bs
+  statement_line: equity
+  judgement_class: false
+  notes: null
+- class: equity.reserves
+  statement_section: bs
+  statement_line: equity
+  judgement_class: false
+  notes: null
+- class: suspense.unmapped
+  statement_section: memo
+  statement_line: suspense
+  judgement_class: false
+  notes: 'Real class with a real balance. Never hidden; Decision: D-053'

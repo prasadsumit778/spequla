@@ -1,0 +1,69 @@
+# Generated from corpus/05 and corpus/05a for metric 'cm1'. Do not hand-edit.
+source: corpus/05a_SPEQULA_METRIC_CONTRACTS.yml (worked contract)
+registry:
+  metric_id: cm1
+  label: CM1
+  category: MANAGEMENT
+  profile: consumer
+  p0_ask: true
+  p0_statement: false
+  definition: Gross margin less operating cost, before any marketing. Answers whether the unit economics
+    work at all.
+  formula: metric.gross_profit - metric.operating_cost_cm1
+  unit: INR
+  source_facts:
+  - derived
+  dimensions:
+  - entity
+  - date
+  - channel
+  - product
+  - business_unit
+  time_grain: month
+  time_logic: period_sum
+  aggregation: sum
+  comparisons:
+  - mom
+  - yoy
+  - ytd
+  allowed_filters:
+  - entity
+  - period
+  - customer
+  - product
+  - channel
+  - location
+  - cost_centre
+  dependencies:
+  - gross_profit
+  - operating_cost_cm1
+  alternative_definitions: Which operating costs sit above CM1 versus in corporate overhead
+  override_allowed: true
+  governed_by:
+  - D-060
+  unresolved_decisions: []
+  compiles: true
+  version: 1
+  owner: SPEQULA global default, resolved 2026-08-20
+contract:
+  version: 1
+  label: CM1
+  category: MANAGEMENT
+  profile: consumer
+  formula: metric.gross_profit - metric.operating_cost_cm1
+  dependencies:
+  - gross_profit
+  - operating_cost_cm1
+  dimensions:
+  - entity
+  - date
+  - channel
+  - product
+  - business_unit
+  aggregation: sum
+  time_logic: period_sum
+  unit: INR
+  override_scope: company
+  governed_by:
+  - D-060
+  approved_by: human

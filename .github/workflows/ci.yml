@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: spequla
+          POSTGRES_PASSWORD: spequla
+          POSTGRES_DB: spequla
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U spequla"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://spequla:spequla@localhost:5432/spequla
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      # corpus/11 section 5: "Every commit -- SQL compilation, IR parsing,
+      # unit tests." The compiler and IR validator arrive in a later sprint;
+      # for sprint 0/1 this is config + migration + ingestion unit and
+      # integration tests.
+      - name: Unit tests
+        run: PYTHONPATH=. pytest tests/unit -q
+
+      # Migration dry run: shared migrations plus one throwaway tenant schema,
+      # applied against a clean database, per corpus/12 sprint 0's "CI running"
+      # exit item and corpus/04 section 6's "loop over schemas in one deploy."
+      - name: Migration dry run
+        run: |
+          PYTHONPATH=. python3 db/migrations/runner.py
+          PYTHONPATH=. python3 scripts/create_tenant.py ci-dry-run --synthetic
+          PYTHONPATH=. python3 db/migrations/runner.py
+
+      - name: Integration tests
+        run: PYTHONPATH=. pytest tests/integration -q
+
+      # corpus/11 section 3.1: financial accuracy is GATING, "exact, to the
+      # rupee, no tolerance." tests/eval/test_trial_balance_36_months.py is
+      # sprint 1's acceptance criterion; the golden-question suite (corpus/10)
+      # lands in sprint 4.
+      - name: Eval suite (gating)
+        run: PYTHONPATH=. pytest tests/eval -q

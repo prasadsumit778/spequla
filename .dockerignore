@@ -1,0 +1,23 @@
+# Backend Docker build context. web/ has its own .dockerignore.
+.git
+.github
+web/
+corpus/
+synthetic/
+tests/
+data/
+docs/
+*.md
+.env
+.env.example
+.env.local
+.env.local.example
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+requirements-dev.txt
+docker-compose.yml
+Dockerfile
+.dockerignore

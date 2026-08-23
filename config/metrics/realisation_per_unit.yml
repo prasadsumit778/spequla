@@ -1,0 +1,50 @@
+# Generated from corpus/05 and corpus/05a for metric 'realisation_per_unit'. Do not hand-edit.
+source: corpus/05_SPEQULA_METRIC_REGISTRY.csv (registry row only; no worked contract exists in corpus/05a
+  for this metric)
+registry:
+  metric_id: realisation_per_unit
+  label: Realisation per unit
+  category: MANAGEMENT
+  profile: manufacturing
+  p0_ask: true
+  p0_statement: false
+  definition: Average net price achieved per unit sold.
+  formula: metric.net_revenue / metric.volume_sold
+  unit: INR per unit
+  source_facts:
+  - derived
+  dimensions:
+  - entity
+  - date
+  - customer
+  - product
+  - channel
+  - location
+  time_grain: month
+  time_logic: period_sum
+  aggregation: ratio_of_sums
+  comparisons:
+  - mom
+  - yoy
+  - ytd
+  allowed_filters:
+  - entity
+  - period
+  - customer
+  - product
+  - channel
+  - location
+  - cost_centre
+  dependencies:
+  - net_revenue
+  - volume_sold
+  alternative_definitions: Unit of measure, capacity basis and rejection point all vary by plant and must
+    be declared
+  override_allowed: true
+  governed_by:
+  - D-041
+  unresolved_decisions:
+  - D-041
+  compiles: false
+  version: 1
+  owner: SPEQULA global default

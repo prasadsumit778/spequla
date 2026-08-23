@@ -1,0 +1,46 @@
+# Generated from corpus/05 and corpus/05a for metric 'capacity_utilisation_pct'. Do not hand-edit.
+source: corpus/05_SPEQULA_METRIC_REGISTRY.csv (registry row only; no worked contract exists in corpus/05a
+  for this metric)
+registry:
+  metric_id: capacity_utilisation_pct
+  label: Capacity utilisation %
+  category: MANAGEMENT
+  profile: manufacturing
+  p0_ask: true
+  p0_statement: false
+  definition: Output against practical capacity.
+  formula: metric.volume_produced / practical_capacity
+  unit: fraction
+  source_facts:
+  - derived
+  dimensions:
+  - entity
+  - date
+  - location
+  time_grain: month
+  time_logic: period_sum
+  aggregation: ratio_of_sums
+  comparisons:
+  - mom
+  - yoy
+  - ytd
+  allowed_filters:
+  - entity
+  - period
+  - customer
+  - product
+  - channel
+  - location
+  - cost_centre
+  dependencies:
+  - volume_produced
+  alternative_definitions: Unit of measure, capacity basis and rejection point all vary by plant and must
+    be declared
+  override_allowed: true
+  governed_by:
+  - D-042
+  unresolved_decisions:
+  - D-042
+  compiles: false
+  version: 1
+  owner: SPEQULA global default

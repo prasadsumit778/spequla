@@ -1,0 +1,81 @@
+# Generated from corpus/05 and corpus/05a for metric 'gross_margin_pct'. Do not hand-edit.
+source: corpus/05a_SPEQULA_METRIC_CONTRACTS.yml (worked contract)
+registry:
+  metric_id: gross_margin_pct
+  label: Gross margin %
+  category: STANDARD
+  profile: both
+  p0_ask: true
+  p0_statement: true
+  definition: Gross profit as a proportion of net revenue.
+  formula: metric.gross_profit / metric.net_revenue
+  unit: fraction
+  source_facts:
+  - derived
+  dimensions:
+  - entity
+  - date
+  - customer
+  - product
+  - channel
+  - location
+  time_grain: month
+  time_logic: period_sum
+  aggregation: ratio_of_sums
+  comparisons:
+  - mom
+  - yoy
+  - ytd
+  allowed_filters:
+  - entity
+  - period
+  - customer
+  - product
+  - channel
+  - location
+  - cost_centre
+  dependencies:
+  - gross_profit
+  - net_revenue
+  alternative_definitions: All variation comes from the underlying revenue and COGS definitions, not from
+    this formula
+  override_allowed: false
+  governed_by: []
+  unresolved_decisions: []
+  compiles: true
+  version: 1
+  owner: SPEQULA global default
+contract:
+  version: 1
+  label: Gross margin %
+  category: STANDARD
+  definition: Gross profit as a proportion of net revenue.
+  formula: metric.gross_profit / metric.net_revenue
+  aggregation: ratio_of_sums
+  compiled_shape: 'SELECT SUM(gross_profit) / NULLIF(SUM(net_revenue), 0)
+
+    -- never: AVG(gross_profit / net_revenue)
+
+    '
+  guards:
+  - zero_denominator: Return undefined with a stated reason. Never zero, never null, never a divide-by-zero
+      error surfaced to the user.
+  - sign_flip: A negative net revenue in any period makes this metric meaningless. Raise an exception
+      rather than displaying a negative percentage.
+  source_facts:
+  - derived
+  dependencies:
+  - gross_profit
+  - net_revenue
+  dimensions:
+  - entity
+  - date
+  - customer
+  - product
+  - channel
+  - location
+  time_logic: period_sum
+  unit: fraction
+  override_scope: none
+  governed_by: []
+  approved_by: human

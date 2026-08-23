@@ -1,0 +1,48 @@
+# Generated from corpus/05 and corpus/05a for metric 'marketing_cost_per_order'. Do not hand-edit.
+source: corpus/05_SPEQULA_METRIC_REGISTRY.csv (registry row only; no worked contract exists in corpus/05a
+  for this metric)
+registry:
+  metric_id: marketing_cost_per_order
+  label: Marketing cost per order
+  category: MANAGEMENT
+  profile: consumer
+  p0_ask: true
+  p0_statement: false
+  definition: Marketing spend per order, split by acquisition and retention where the order file tags
+    order type.
+  formula: metric.marketing_spend / metric.orders
+  unit: INR per order
+  source_facts:
+  - derived
+  dimensions:
+  - entity
+  - date
+  - channel
+  - order_type
+  - business_unit
+  time_grain: month
+  time_logic: period_sum
+  aggregation: ratio_of_sums
+  comparisons:
+  - mom
+  - yoy
+  - ytd
+  allowed_filters:
+  - entity
+  - period
+  - customer
+  - product
+  - channel
+  - location
+  - cost_centre
+  dependencies:
+  - marketing_spend
+  - orders
+  alternative_definitions: Acquisition cost per new order is the CAC analogue and is only computable where
+    orders carry an acquisition or retention flag
+  override_allowed: false
+  governed_by: []
+  unresolved_decisions: []
+  compiles: true
+  version: 1
+  owner: SPEQULA global default

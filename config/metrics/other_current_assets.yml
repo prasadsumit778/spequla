@@ -1,0 +1,40 @@
+# Generated from corpus/05 and corpus/05a for metric 'other_current_assets'. Do not hand-edit.
+source: corpus/05_SPEQULA_METRIC_REGISTRY.csv (registry row only; no worked contract exists in corpus/05a
+  for this metric)
+registry:
+  metric_id: other_current_assets
+  label: Other current assets
+  category: STANDARD
+  profile: both
+  p0_ask: false
+  p0_statement: true
+  definition: Advances, prepaid expenses, deposits and statutory balances.
+  formula: gl_class(asset.advance_supplier|asset.prepaid|asset.statutory_receivable|asset.loans_advances)
+  unit: INR
+  source_facts:
+  - fact_gl_entry
+  dimensions:
+  - entity
+  - date
+  time_grain: month
+  time_logic: period_end
+  aggregation: last_value
+  comparisons:
+  - mom
+  - yoy
+  allowed_filters:
+  - entity
+  - period
+  - customer
+  - product
+  - channel
+  - location
+  - cost_centre
+  dependencies: []
+  alternative_definitions: None in common use
+  override_allowed: false
+  governed_by: []
+  unresolved_decisions: []
+  compiles: true
+  version: 1
+  owner: SPEQULA global default

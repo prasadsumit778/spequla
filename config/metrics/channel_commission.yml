@@ -1,0 +1,45 @@
+# Generated from corpus/05 and corpus/05a for metric 'channel_commission'. Do not hand-edit.
+source: corpus/05_SPEQULA_METRIC_REGISTRY.csv (registry row only; no worked contract exists in corpus/05a
+  for this metric)
+registry:
+  metric_id: channel_commission
+  label: Channel commission and fees
+  category: MANAGEMENT
+  profile: consumer
+  p0_ask: true
+  p0_statement: false
+  definition: Marketplace commission, platform fees and payment fees borne on channel sales.
+  formula: sum(fact_channel_order_line.commission_amount + payment_fee)
+  unit: INR
+  source_facts:
+  - fact_channel_order_line
+  dimensions:
+  - entity
+  - date
+  - channel
+  - business_unit
+  time_grain: month
+  time_logic: period_sum
+  aggregation: sum
+  comparisons:
+  - mom
+  - yoy
+  - ytd
+  allowed_filters:
+  - entity
+  - period
+  - customer
+  - product
+  - channel
+  - location
+  - cost_centre
+  dependencies: []
+  alternative_definitions: Under the marketplace model commission earned is revenue, not a cost. See D-061
+  override_allowed: true
+  governed_by:
+  - D-004
+  - D-061
+  unresolved_decisions: []
+  compiles: true
+  version: 1
+  owner: SPEQULA global default, resolved 2026-08-20

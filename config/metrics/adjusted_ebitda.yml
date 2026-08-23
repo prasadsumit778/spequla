@@ -1,0 +1,46 @@
+# Generated from corpus/05 and corpus/05a for metric 'adjusted_ebitda'. Do not hand-edit.
+source: corpus/05_SPEQULA_METRIC_REGISTRY.csv (registry row only; no worked contract exists in corpus/05a
+  for this metric)
+registry:
+  metric_id: adjusted_ebitda
+  label: Adjusted EBITDA
+  category: MANAGEMENT
+  profile: both
+  p0_ask: false
+  p0_statement: true
+  definition: EBITDA after declared, itemised add-backs. Never displayed without unadjusted EBITDA beside
+    it.
+  formula: metric.ebitda + sum(declared_addbacks)
+  unit: INR
+  source_facts:
+  - derived
+  dimensions:
+  - entity
+  - date
+  time_grain: month
+  time_logic: period_sum
+  aggregation: sum
+  comparisons:
+  - mom
+  - yoy
+  - ytd
+  allowed_filters:
+  - entity
+  - period
+  - customer
+  - product
+  - channel
+  - location
+  - cost_centre
+  dependencies:
+  - ebitda
+  alternative_definitions: Entirely dependent on the declared add-back list. Expect every company to differ
+  override_allowed: true
+  governed_by:
+  - D-021
+  - D-022
+  - D-024
+  unresolved_decisions: []
+  compiles: true
+  version: 1
+  owner: SPEQULA global default, resolved 2026-08-20

@@ -1,0 +1,42 @@
+# Generated from corpus/05 and corpus/05a for metric 'cash'. Do not hand-edit.
+source: corpus/05_SPEQULA_METRIC_REGISTRY.csv (registry row only; no worked contract exists in corpus/05a
+  for this metric)
+registry:
+  metric_id: cash
+  label: Cash and bank
+  category: CONVENTION
+  profile: both
+  p0_ask: true
+  p0_statement: true
+  definition: Cash and bank balances available to the business, per the declared inclusion rule.
+  formula: gl_class(asset.cash_bank)
+  unit: INR
+  source_facts:
+  - fact_gl_entry
+  - fact_bank_txn
+  dimensions:
+  - entity
+  - date
+  time_grain: month
+  time_logic: period_end
+  aggregation: last_value
+  comparisons:
+  - mom
+  - yoy
+  allowed_filters:
+  - entity
+  - period
+  - customer
+  - product
+  - channel
+  - location
+  - cost_centre
+  dependencies: []
+  alternative_definitions: Whether fixed deposits and margin money are included
+  override_allowed: true
+  governed_by:
+  - D-034
+  unresolved_decisions: []
+  compiles: true
+  version: 1
+  owner: SPEQULA global default, resolved 2026-08-20

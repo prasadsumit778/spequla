@@ -1,0 +1,69 @@
+# Generated from corpus/05 and corpus/05a for metric 'gmv'. Do not hand-edit.
+source: corpus/05a_SPEQULA_METRIC_CONTRACTS.yml (worked contract)
+registry:
+  metric_id: gmv
+  label: GMV
+  category: MANAGEMENT
+  profile: consumer
+  p0_ask: true
+  p0_statement: false
+  definition: 'Gross merchandise value: the customer-facing transacted value, inclusive of GST. The top
+    line of a consumer P&L.'
+  formula: sum(fact_channel_order_line.gross_amount)
+  unit: INR
+  source_facts:
+  - fact_channel_order_line
+  dimensions:
+  - entity
+  - date
+  - channel
+  - product
+  - business_unit
+  time_grain: month
+  time_logic: period_sum
+  aggregation: sum
+  comparisons:
+  - mom
+  - yoy
+  - ytd
+  allowed_filters:
+  - entity
+  - period
+  - customer
+  - product
+  - channel
+  - location
+  - cost_centre
+  dependencies: []
+  alternative_definitions: Whether cancelled and returned orders are included; whether shipping charged
+    is in GMV
+  override_allowed: true
+  governed_by:
+  - D-047
+  unresolved_decisions: []
+  compiles: true
+  version: 1
+  owner: SPEQULA global default, resolved 2026-08-20
+contract:
+  version: 1
+  label: GMV
+  category: MANAGEMENT
+  profile: consumer
+  definition: Customer-facing transacted value, inclusive of GST. Top line of the ladder.
+  formula: sum(fact_channel_order_line.gross_amount)
+  revenue_model_split:
+    marketplace:
+      gmv_is: a volume statistic. The inventory belongs to the seller
+      revenue_is: commission_earned + advertising_earned + platform_fee_earned
+      cogs: none
+    buyout:
+      gmv_is: the revenue base
+      revenue_is: gmv - discount - gst
+      cogs: cost of goods sold
+  hard_rule: 'Never sum GMV across revenue models and present it as revenue. Where a combined GMV figure
+    is shown, the split must be stated on the same output.
+
+    '
+  governed_by:
+  - D-061
+  approved_by: human

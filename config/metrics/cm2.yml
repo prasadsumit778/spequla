@@ -1,0 +1,71 @@
+# Generated from corpus/05 and corpus/05a for metric 'cm2'. Do not hand-edit.
+source: corpus/05a_SPEQULA_METRIC_CONTRACTS.yml (worked contract)
+registry:
+  metric_id: cm2
+  label: CM2
+  category: MANAGEMENT
+  profile: consumer
+  p0_ask: true
+  p0_statement: false
+  definition: CM1 less all marketing spend. Answers whether marketing is paying back.
+  formula: metric.cm1 - metric.marketing_spend
+  unit: INR
+  source_facts:
+  - derived
+  dimensions:
+  - entity
+  - date
+  - channel
+  - product
+  - business_unit
+  time_grain: month
+  time_logic: period_sum
+  aggregation: sum
+  comparisons:
+  - mom
+  - yoy
+  - ytd
+  allowed_filters:
+  - entity
+  - period
+  - customer
+  - product
+  - channel
+  - location
+  - cost_centre
+  dependencies:
+  - cm1
+  - marketing_spend
+  alternative_definitions: None in common use
+  override_allowed: true
+  governed_by:
+  - D-023
+  unresolved_decisions: []
+  compiles: true
+  version: 1
+  owner: SPEQULA global default, resolved 2026-08-20
+contract:
+  version: 1
+  label: CM2
+  category: MANAGEMENT
+  profile: consumer
+  definition: CM1 less all marketing. The headline unit economics figure.
+  formula: metric.cm1 - metric.marketing_spend
+  dependencies:
+  - cm1
+  - marketing_spend
+  dimensions:
+  - entity
+  - date
+  - channel
+  - product
+  - business_unit
+  aggregation: sum
+  unit: INR
+  marketing_scope:
+  - performance_marketing: included
+  - brand_marketing: included
+  - acquisition_vs_retention: split where the order file tags order_type
+  governed_by:
+  - D-023
+  approved_by: human

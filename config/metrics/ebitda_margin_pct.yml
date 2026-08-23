@@ -1,0 +1,43 @@
+# Generated from corpus/05 and corpus/05a for metric 'ebitda_margin_pct'. Do not hand-edit.
+source: corpus/05_SPEQULA_METRIC_REGISTRY.csv (registry row only; no worked contract exists in corpus/05a
+  for this metric)
+registry:
+  metric_id: ebitda_margin_pct
+  label: EBITDA margin %
+  category: MANAGEMENT
+  profile: both
+  p0_ask: true
+  p0_statement: true
+  definition: EBITDA as a proportion of net revenue.
+  formula: metric.ebitda / metric.net_revenue
+  unit: fraction
+  source_facts:
+  - derived
+  dimensions:
+  - entity
+  - date
+  time_grain: month
+  time_logic: period_sum
+  aggregation: ratio_of_sums
+  comparisons:
+  - mom
+  - yoy
+  - ytd
+  allowed_filters:
+  - entity
+  - period
+  - customer
+  - product
+  - channel
+  - location
+  - cost_centre
+  dependencies:
+  - ebitda
+  - net_revenue
+  alternative_definitions: None in common use
+  override_allowed: false
+  governed_by: []
+  unresolved_decisions: []
+  compiles: true
+  version: 1
+  owner: SPEQULA global default

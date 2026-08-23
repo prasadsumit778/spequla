@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+psycopg[binary]
+pydantic>=2
+pyyaml
+python-multipart
+boto3
+workos
+pyjwt[crypto]

@@ -1,0 +1,726 @@
+# Generated from corpus/00_SPEQULA_OPEN_DECISIONS.md. Do not hand-edit.
+# Regenerate with scripts/gen_decisions_yml.py whenever the corpus changes.
+- id: D-001
+  type: decision
+  status: open
+  resolution: null
+  note: null
+  label: Are sales ledgers booked GST-inclusive or GST-exclusive?
+  governs:
+  - '03'
+  - '05'
+  - '06'
+- id: D-002
+  type: decision
+  status: open
+  resolution: null
+  note: null
+  label: Revenue recognised at invoice date, dispatch date, or delivery/acceptance?
+  governs:
+  - '04'
+  - '05'
+- id: D-003
+  type: decision
+  status: resolved
+  resolution: Returns, trade discount, cash discount, rate difference. Scheme and rebate accruals excluded,
+    treated as opex.
+  note: null
+  label: Which deductions net off to reach net revenue?
+  governs:
+  - '03'
+  - '05'
+- id: D-004
+  type: decision
+  status: resolved
+  resolution: Commission borne is a cost above gross profit. Commission earned under the marketplace model
+    is revenue. See D-061.
+  note: null
+  label: 'Marketplace commission: netted from revenue, or booked as a cost line?'
+  governs:
+  - '03'
+  - '05'
+  - '06'
+- id: D-005
+  type: decision
+  status: resolved
+  resolution: Shipping recovered from the customer is a contra to freight cost, not revenue.
+  note: null
+  label: 'Shipping charged to the customer: revenue, or contra to freight cost?'
+  governs:
+  - '03'
+  - '05'
+- id: D-006
+  type: decision
+  status: open
+  resolution: null
+  note: null
+  label: 'Franchise channel: is revenue the sell-in to the franchisee or the sell-out to the consumer?'
+  governs:
+  - '04'
+  - '05'
+  - '06'
+- id: D-007
+  type: decision
+  status: resolved
+  resolution: Quick commerce revenue recognised on despatch to the dark store. Dark-store stock remains
+    our inventory until sold.
+  note: null
+  label: 'Quick commerce: revenue on despatch to the dark store, or on sale to the consumer?'
+  governs:
+  - '04'
+  - '05'
+- id: D-008
+  type: decision
+  status: resolved
+  resolution: Export sales booked at the invoice-date rate. Exchange difference sits in other income,
+    not in revenue.
+  note: null
+  label: 'Export sales: booked at the invoice-date rate, at a policy rate, or at the realisation rate?
+    And does exchange difference sit in revenue or in other income?'
+  governs:
+  - '04'
+  - '05'
+- id: D-009
+  type: decision
+  status: resolved
+  resolution: Scrap sales credit COGS as a yield recovery, not revenue. Manufacturing only.
+  note: null
+  label: 'Scrap sales: revenue line, or credit to COGS?'
+  governs:
+  - '03'
+  - '05'
+- id: D-010
+  type: decision
+  status: resolved
+  resolution: Job work income received is a revenue line, not netted against conversion cost.
+  note: null
+  label: 'Job work income received: revenue line, or netted against conversion cost?'
+  governs:
+  - '03'
+  - '05'
+- id: D-011
+  type: decision
+  status: resolved
+  resolution: Opex for manufacturing, COGS for consumer.
+  note: null
+  label: 'Freight outward: COGS or opex?'
+  governs:
+  - '03'
+  - '05'
+  - 08
+- id: D-012
+  type: decision
+  status: open
+  resolution: null
+  note: null
+  label: 'Freight inward and clearing: capitalised into inventory value, or expensed?'
+  governs:
+  - '04'
+  - '05'
+- id: D-013
+  type: decision
+  status: resolved
+  resolution: Primary and secondary packing material both in COGS.
+  note: null
+  label: 'Primary and secondary packing material: COGS or opex?'
+  governs:
+  - '03'
+  - '05'
+- id: D-014
+  type: decision
+  status: resolved
+  resolution: Payment gateway and COD fees in COGS. Variable per order.
+  note: null
+  label: 'Payment gateway and COD fees: COGS or opex?'
+  governs:
+  - '03'
+  - '05'
+- id: D-015
+  type: decision
+  status: open
+  resolution: null
+  note: null
+  label: 'Power and fuel: COGS, or opex?'
+  governs:
+  - '03'
+  - '05'
+- id: D-016
+  type: decision
+  status: open
+  resolution: null
+  note: null
+  label: 'Direct factory labour: inside COGS, or inside the employee cost line?'
+  governs:
+  - '03'
+  - '05'
+- id: D-017
+  type: decision
+  status: open
+  resolution: null
+  note: null
+  label: Standard costing or actual costing? If standard, does absorption variance sit in COGS?
+  governs:
+  - '03'
+  - '05'
+  - 09
+- id: D-018
+  type: decision
+  status: open
+  resolution: null
+  note: null
+  label: Inventory valuation basis?
+  governs:
+  - '04'
+  - '05'
+- id: D-019
+  type: decision
+  status: resolved
+  resolution: Inventory write-down and obsolescence provision in COGS, not exceptional.
+  note: null
+  label: 'Inventory write-down and obsolescence provision: COGS, or exceptional?'
+  governs:
+  - '03'
+  - '05'
+- id: D-020
+  type: decision
+  status: resolved
+  resolution: 'Resolved against D-060, not against the original suggestion. Consumer: warehouse, fulfilment
+    and offline manpower sit in operating cost above CM1, NOT in COGS, otherwise the CM1 rung loses its
+    meaning. Manufacturing: warehousing stays in COGS, since there is no ladder.'
+  note: null
+  label: 'Warehouse rent, labour and fulfilment cost: COGS or opex?'
+  governs:
+  - '03'
+  - '05'
+- id: D-021
+  type: decision
+  status: resolved
+  resolution: No add-back by default. Adjusted EBITDA is a separate memo line, add-backs itemised.
+  note: null
+  label: 'Owner and promoter remuneration: added back to EBITDA?'
+  governs:
+  - '03'
+  - '05'
+  - 08
+- id: D-022
+  type: decision
+  status: resolved
+  resolution: Related-party rent and charges reported as booked. Any normalisation is an itemised adjusted-EBITDA
+    add-back, never a silent restatement.
+  note: null
+  label: 'Related-party rent and charges: adjusted to market, or left as booked?'
+  governs:
+  - '03'
+  - '05'
+- id: D-023
+  type: decision
+  status: resolved
+  resolution: All marketing sits in the CM1 to CM2 step. Never inside CM1, never inside corporate overhead.
+  note: null
+  label: 'Performance marketing: variable cost (inside contribution margin) or fixed opex?'
+  governs:
+  - '03'
+  - '05'
+- id: D-024
+  type: decision
+  status: resolved
+  resolution: Non-recurring, above 0.25% of annual revenue, named approval with a written reason. Never
+    assigned by AI.
+  note: null
+  label: What counts as a one-off, and above what value?
+  governs:
+  - '03'
+  - '05'
+  - 09
+- id: D-025
+  type: decision
+  status: resolved
+  resolution: EBITDA struck before other income. Interest income never treated as operating.
+  note: null
+  label: Is EBITDA struck before or after other income? Which other income counts as operating?
+  governs:
+  - '03'
+  - '05'
+- id: D-026
+  type: decision
+  status: resolved
+  resolution: AS regime. Lease rentals expensed in full.
+  note: null
+  label: 'Lease rentals: expensed in full, or split into depreciation and interest?'
+  governs:
+  - '03'
+  - '05'
+- id: D-027
+  type: decision
+  status: resolved
+  resolution: CSR, donations and directors' sitting fees inside EBITDA.
+  note: null
+  label: 'CSR, donations, directors'' sitting fees: inside EBITDA or below?'
+  governs:
+  - '03'
+  - '05'
+- id: D-028
+  type: decision
+  status: resolved
+  resolution: Period-end AR, net revenue, 365 days. Excludes unbilled and marketplace settlement. Does
+    not net bill discounting.
+  note: null
+  label: 'DSO basis: period-end or average AR? Gross or net revenue? 365 or 360 days?'
+  governs:
+  - '05'
+  - '10'
+- id: D-029
+  type: decision
+  status: resolved
+  resolution: Unbilled revenue and retention money excluded from AR, disclosed separately. Consistent
+    with D-028.
+  note: null
+  label: Does AR include unbilled revenue and retention money?
+  governs:
+  - '04'
+  - '05'
+- id: D-030
+  type: decision
+  status: resolved
+  resolution: On COGS, not purchases. Founder decision for CCC internal consistency. Switchable. Overstates
+    payment days in inventory-build months.
+  note: null
+  label: DPO computed on COGS, on purchases, or on total addressable spend?
+  governs:
+  - '05'
+  - '10'
+- id: D-031
+  type: decision
+  status: resolved
+  resolution: On COGS. RM plus WIP plus FG for manufacturing, FG only for consumer.
+  note: null
+  label: DIO computed on COGS or on production cost? Which inventory buckets?
+  governs:
+  - '05'
+  - '10'
+- id: D-032
+  type: decision
+  status: resolved
+  resolution: Customer advances shown as a liability, never netted against AR. Netting flatters DSO.
+  note: null
+  label: 'Customer advances: netted against AR, or shown as a liability?'
+  governs:
+  - '04'
+  - '05'
+- id: D-033
+  type: decision
+  status: resolved
+  resolution: Own line, never inside trade AR.
+  note: null
+  label: 'Marketplace settlement receivable: part of AR, or its own line?'
+  governs:
+  - '04'
+  - '05'
+- id: D-034
+  type: decision
+  status: resolved
+  resolution: Free cash only. Restricted balances shown separately.
+  note: null
+  label: Does "cash" include fixed deposits, margin money and restricted balances?
+  governs:
+  - '04'
+  - '05'
+- id: D-035
+  type: decision
+  status: resolved
+  resolution: Debt includes term loans, cash credit and overdraft, current maturities, bill discounting
+    (per D-036) and unsecured related-party loans. Excludes lease liabilities, since AS applies and no
+    lease liability is recognised.
+  note: null
+  label: What counts as debt?
+  governs:
+  - '04'
+  - '05'
+- id: D-036
+  type: decision
+  status: resolved
+  resolution: Debt, with the receivable retained. Not netted against AR.
+  note: null
+  label: 'Bill discounting and channel financing: debt, or a reduction of AR?'
+  governs:
+  - '04'
+  - '05'
+- id: D-037
+  type: decision
+  status: resolved
+  resolution: Capex measured as additions to gross block plus capital WIP movement, not cash paid.
+  note: null
+  label: Capex measured on a cash basis or as additions to gross block?
+  governs:
+  - '04'
+  - '05'
+- id: D-038
+  type: decision
+  status: resolved
+  resolution: April to March.
+  note: null
+  label: Fiscal year start month.
+  governs:
+  - '04'
+- id: D-039
+  type: decision
+  status: resolved
+  resolution: The SPEQULA analyst locks when the pack is signed, targeting the 15th of the following month.
+  note: null
+  label: Who locks a period, and on what day of the following month?
+  governs:
+  - '04'
+  - 09
+- id: D-040
+  type: decision
+  status: resolved
+  resolution: Every change to a locked period is flagged. Notification above 0.25 percent of period revenue,
+    aligned with D-024.
+  note: null
+  label: 'Restatement threshold: below what change do we accept a revised figure without flagging it?'
+  governs:
+  - 09
+- id: D-041
+  type: decision
+  status: open
+  resolution: null
+  note: null
+  label: 'Unit of output: tonnes, pieces, litres, SKU units? Realisation is per what unit?'
+  governs:
+  - '04'
+  - '05'
+  - '10'
+- id: D-042
+  type: decision
+  status: open
+  resolution: null
+  note: null
+  label: 'Capacity basis: installed, rated, or practical/achievable?'
+  governs:
+  - '04'
+  - '05'
+- id: D-043
+  type: decision
+  status: resolved
+  resolution: Yield measured at output in the declared unit, rejection counted at output. Per-company
+    override where the process demands it.
+  note: null
+  label: 'Yield: measured by weight or by count? Where does rejection sit, at input or output?'
+  governs:
+  - '04'
+  - '05'
+- id: D-044
+  type: decision
+  status: resolved
+  resolution: WIP valued and included in inventory metrics where the ERP tracks it. Where it does not,
+    DIO is computed on RM plus FG and the exclusion is stated on the output.
+  note: null
+  label: Is WIP valued and included in inventory metrics?
+  governs:
+  - '04'
+  - '05'
+- id: D-045
+  type: decision
+  status: resolved
+  resolution: Subcontracted and job work volume counted in own output, flagged separately so it can be
+    excluded.
+  note: null
+  label: 'Subcontracted / job work volume: counted in own output?'
+  governs:
+  - '04'
+  - '05'
+- id: D-046
+  type: decision
+  status: resolved
+  resolution: Own website, marketplace (per marketplace), quick commerce (per platform), owned retail,
+    franchise retail, distributor, exports.
+  note: null
+  label: Exact channel taxonomy.
+  governs:
+  - '04'
+  - '05'
+  - '06'
+  - '10'
+- id: D-047
+  type: decision
+  status: resolved
+  resolution: Returns booked in the period the return occurs, matching the books. Not restated to the
+    original sale period.
+  note: null
+  label: 'Returns: netted at the original order line, or booked in the period the return occurs?'
+  governs:
+  - '04'
+  - '05'
+- id: D-048
+  type: decision
+  status: resolved
+  resolution: Superseded by the CM1 and CM2 ladder. A single contribution margin metric no longer exists.
+  note: null
+  label: 'Contribution margin: after which costs exactly?'
+  governs:
+  - '03'
+  - '05'
+- id: D-049
+  type: decision
+  status: resolved
+  resolution: AOV computed net of returns, per order.
+  note: null
+  label: 'AOV: gross or net of returns? Per order or per customer?'
+  governs:
+  - '05'
+  - '10'
+- id: D-050
+  type: decision
+  status: open
+  resolution: null
+  note: null
+  label: 'Franchise inventory: consignment (ours) or sold (theirs)?'
+  governs:
+  - '04'
+  - '05'
+- id: D-051
+  type: decision
+  status: resolved
+  resolution: Zero. Settled, not open.
+  note: null
+  label: Trial balance tie tolerance
+  governs:
+  - 09
+- id: D-052
+  type: decision
+  status: open
+  resolution: null
+  note: null
+  label: Books-to-bank residual tolerance, as a percent of period cash movement
+  governs:
+  - 09
+- id: D-053
+  type: decision
+  status: resolved
+  resolution: Block above 2% of period value, badge between 0.5% and 2%, silent below 0.5%.
+  note: null
+  label: Unmapped value threshold above which metrics are blocked entirely
+  governs:
+  - '06'
+  - 09
+- id: D-054
+  type: decision
+  status: resolved
+  resolution: An unreconciled period blocks the monthly pack. It does not ship badged.
+  note: null
+  label: 'What happens when a period is unreconciled: block the pack, or ship it badged?'
+  governs:
+  - '07'
+  - 09
+- id: D-055
+  type: decision
+  status: resolved
+  resolution: Management layout, with a Schedule III Division I reconciliation appendix. AS regime per
+    V-001.
+  note: null
+  label: 'Pack layout: Schedule III statutory presentation, or a management layout?'
+  governs:
+  - '07'
+- id: D-056
+  type: decision
+  status: resolved
+  resolution: Crores with one decimal for headline metrics, lakhs with one decimal for statement detail,
+    absolute rupees at business unit level per the reference MIS. Negatives in brackets.
+  note: null
+  label: Units and rounding in all outputs.
+  governs:
+  - '07'
+- id: D-057
+  type: decision
+  status: resolved
+  resolution: Prior month and prior year mandatory on every statement. Budget only where the client has
+    one in usable form. Forecast column present in the layout, empty in P0.
+  note: null
+  label: Which comparisons are mandatory on every statement?
+  governs:
+  - '07'
+- id: D-058
+  type: decision
+  status: resolved
+  resolution: Employees excluded from model-reachable views entirely. Customers and vendors tokenised,
+    group/segment/category retained.
+  note: null
+  label: 'Pseudonymisation scope: which entities get tokenised before any model call?'
+  governs:
+  - '04'
+  - '07'
+- id: D-059
+  type: decision
+  status: resolved
+  resolution: Volume at prior-period price, price at current-period volume, mix as residual. Residual
+    always reported.
+  note: null
+  label: Price, volume and mix decomposition convention.
+  governs:
+  - '05'
+  - '07'
+  - 08
+  - '10'
+- id: D-060
+  type: decision
+  status: resolved
+  resolution: Servicing, fulfilment, offline manpower, offline rent. Marketing excluded by design.
+  note: null
+  label: CM1 operating cost composition
+  governs: []
+- id: D-061
+  type: decision
+  status: resolved
+  resolution: 'Marketplace: revenue is commission plus advertising earnings plus platform fee. Buyout:
+    revenue is GMV less discount less GST.'
+  note: null
+  label: Marketplace versus buyout revenue
+  governs: []
+- id: D-062
+  type: decision
+  status: resolved
+  resolution: Never allocated. Always shown unallocated below CM2.
+  note: null
+  label: Corporate overhead allocation
+  governs: []
+- id: D-063
+  type: decision
+  status: resolved
+  resolution: Optional, not mandatory. Default consumer segmentation is product and channel.
+  note: null
+  label: Business unit dimension
+  governs: []
+- id: D-064
+  type: decision
+  status: resolved
+  resolution: Included. Balance sheet, cash flow and working capital ship in the P0 pack.
+  note: null
+  label: Balance sheet, cash flow and working capital in the pack
+  governs: []
+- id: V-001
+  type: verify
+  status: resolved
+  resolution: AS, not Ind AS. Confirmed by the founder. Resolves D-026 to lease rentals expensed in full,
+    and removes right-of-use assets, expected credit loss and contract assets from the ontology entirely.
+  note: null
+  label: null
+  governs: []
+- id: V-002
+  type: verify
+  status: open
+  resolution: null
+  note: null
+  label: Schedule III Division I versus Division II presentation requirements for the pack layout.
+  governs:
+  - '07'
+  - D-055
+- id: V-003
+  type: verify
+  status: open
+  resolution: null
+  note: Still open, and no longer blocking. The Tally agent is P1. Pilot one uses whatever export the
+    customer can produce, normalised by hand into the file 01 templates. The Tally tab of the data request
+    stays a placeholder.
+  label: 'TallyPrime export formats, report names and actual column headers for: chart of accounts, trial
+    balance, day book, ledger, sales register, purchase register, stock summary, outstanding receivables
+    and payables.'
+  governs:
+  - '01'
+  - '06'
+- id: V-004
+  type: verify
+  status: open
+  resolution: null
+  note: null
+  label: Tally licence conditions on programmatic and ODBC access.
+  governs:
+  - P1 scope
+- id: V-005
+  type: verify
+  status: open
+  resolution: null
+  note: null
+  label: 'Zoho Books API: rate limits, org-scoped token behaviour, which reports are exposed.'
+  governs:
+  - P1 scope
+- id: V-006
+  type: verify
+  status: open
+  resolution: null
+  note: null
+  label: 'SAP Business One: whether Service Layer access is realistically available in partner-customised
+    installations at this segment, or whether a read replica or scheduled extract is the practical route.'
+  governs:
+  - P1 scope
+- id: V-007
+  type: verify
+  status: open
+  resolution: null
+  note: null
+  label: Actual corporate statement formats for the banks your pilots use.
+  governs:
+  - '01'
+- id: V-008
+  type: verify
+  status: open
+  resolution: null
+  note: null
+  label: Amazon Seller Central settlement report structure and typical settlement lag.
+  governs:
+  - P1 scope
+- id: V-009
+  type: verify
+  status: open
+  resolution: null
+  note: null
+  label: What data quick commerce platforms actually give a brand, in what format, at what lag.
+  governs:
+  - '01'
+  - P1 scope
+- id: V-010
+  type: verify
+  status: open
+  resolution: null
+  note: null
+  label: GST Suvidha Provider commercial terms, pricing and what a client authorisation requires.
+  governs:
+  - P1 scope
+- id: V-011
+  type: verify
+  status: open
+  resolution: null
+  note: null
+  label: DPDP Act 2023 obligations for this product, including the status of notified rules and what the
+    data processing agreement must contain.
+  governs:
+  - Legal
+  - not corpus
+- id: V-012
+  type: verify
+  status: resolved
+  resolution: Zero-retention terms acceptable, US-hosted inference acceptable to target promoters.
+  note: null
+  label: Model vendor zero-retention terms currently on offer, and whether an India-hosted inference option
+    exists that your promoters would accept.
+  governs:
+  - '07'
+  - security section
+- id: V-013
+  type: verify
+  status: open
+  resolution: null
+  note: null
+  label: MSMED Act payment-period rules and the associated income tax disallowance, and whether they apply
+    to your pilots' vendor base.
+  governs:
+  - '05'
+  - '10'
+- id: V-014
+  type: verify
+  status: open
+  resolution: null
+  note: null
+  label: e-invoicing applicability at ₹100 Cr turnover, and therefore whether an IRP feed is available
+    as a near-real-time revenue cross-check.
+  governs:
+  - P1 scope

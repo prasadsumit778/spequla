@@ -1,0 +1,45 @@
+# Generated from corpus/05 and corpus/05a for metric 'yield_pct'. Do not hand-edit.
+source: corpus/05_SPEQULA_METRIC_REGISTRY.csv (registry row only; no worked contract exists in corpus/05a
+  for this metric)
+registry:
+  metric_id: yield_pct
+  label: Yield %
+  category: MANAGEMENT
+  profile: manufacturing
+  p0_ask: true
+  p0_statement: false
+  definition: Good output as a proportion of input consumed.
+  formula: sum(qty_produced) / sum(input_qty)
+  unit: fraction
+  source_facts:
+  - fact_production_output
+  dimensions:
+  - entity
+  - date
+  - product
+  - location
+  time_grain: month
+  time_logic: period_sum
+  aggregation: ratio_of_sums
+  comparisons:
+  - mom
+  - yoy
+  - ytd
+  allowed_filters:
+  - entity
+  - period
+  - customer
+  - product
+  - channel
+  - location
+  - cost_centre
+  dependencies: []
+  alternative_definitions: Unit of measure, capacity basis and rejection point all vary by plant and must
+    be declared
+  override_allowed: true
+  governed_by:
+  - D-043
+  unresolved_decisions: []
+  compiles: true
+  version: 1
+  owner: SPEQULA global default, resolved 2026-08-20
