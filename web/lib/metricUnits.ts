@@ -1,0 +1,75 @@
+/**
+ * metric_id -> unit, exactly as corpus/05_SPEQULA_METRIC_REGISTRY.csv's `unit`
+ * column declares it. Generated from that file, not authored: the registry is
+ * the authority on what a metric is measured in, and guessing from a metric's
+ * name ("ends in _pct, so it is a percentage") is how a ratio ends up rendered
+ * with a rupee sign.
+ *
+ * The API does not send the unit with an overview tile or an Ask citation, so
+ * the frontend needs this to render a value. Regenerate it if the registry
+ * changes. A metric absent from this map is rendered as a bare number -- an
+ * unknown unit is never assumed to be rupees.
+ */
+export const METRIC_UNITS: Record<string, string> = {
+  gross_revenue: "INR",
+  returns: "INR",
+  discounts: "INR",
+  net_revenue: "INR",
+  cogs: "INR",
+  gross_profit: "INR",
+  gross_margin_pct: "fraction",
+  opex: "INR",
+  ebitda: "INR",
+  ebitda_margin_pct: "fraction",
+  adjusted_ebitda: "INR",
+  da: "INR",
+  ebit: "INR",
+  other_income: "INR",
+  interest_expense: "INR",
+  pbt: "INR",
+  tax_expense: "INR",
+  pat: "INR",
+  cash: "INR",
+  restricted_cash: "INR",
+  accounts_receivable: "INR",
+  inventory: "INR",
+  accounts_payable: "INR",
+  other_current_assets: "INR",
+  fixed_assets_net: "INR",
+  debt: "INR",
+  net_debt: "INR",
+  other_current_liabilities: "INR",
+  equity: "INR",
+  working_capital: "INR",
+  working_capital_change: "INR",
+  operating_cash_flow: "INR",
+  capex: "INR",
+  investing_cash_flow: "INR",
+  financing_cash_flow: "INR",
+  free_cash_flow: "INR",
+  closing_cash: "INR",
+  dso: "days",
+  dpo: "days",
+  dio: "days",
+  ccc: "days",
+  volume_sold: "declared_unit",
+  volume_produced: "declared_unit",
+  realisation_per_unit: "INR per unit",
+  capacity_utilisation_pct: "fraction",
+  yield_pct: "fraction",
+  gmv: "INR",
+  gst_on_gmv: "INR",
+  marketing_spend: "INR",
+  channel_commission: "INR",
+  roas: "ratio",
+  operating_cost_cm1: "INR",
+  cm1: "INR",
+  cm1_pct: "fraction",
+  cm2: "INR",
+  cm2_pct: "fraction",
+  corporate_overhead: "INR",
+  marketing_cost_per_order: "INR per order",
+  orders: "count",
+  aov: "INR",
+  return_rate_pct: "fraction",
+};

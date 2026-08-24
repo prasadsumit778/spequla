@@ -1,118 +1,125 @@
 "use client";
 
 import { useState } from "react";
-import { useAuth, useAccessToken } from "@workos-inc/authkit-nextjs/components";
-import { getOverviewTiles, MetricTile, OverviewResult } from "@/lib/api";
+import { getOverviewTiles } from "@/lib/api";
+import { useApiQuery } from "@/lib/useApi";
+import { useWorkspace } from "@/lib/workspace";
+import PageHeader from "@/components/app/PageHeader";
+import StateStrip from "@/components/app/StateStrip";
+import MetricTile from "@/components/app/MetricTile";
+import Button from "@/components/ui/Button";
+import { Field, Toolbar } from "@/components/ui/Field";
+import { EmptyState, ErrorState, Skeleton } from "@/components/ui/States";
 
-const inr = (v: string | null | undefined) => (v == null ? "—" : Number(v).toLocaleString("en-IN"));
-const isPct = (metric: string) => metric.endsWith("_pct");
-const isDays = (metric: string) => ["dso", "dio", "dpo"].includes(metric);
+/**
+ * corpus/08 section 3: the landing screen. Nine headline tiles in three rows
+ * of three, each carrying its citation; a tile that did not resolve shows the
+ * reason in place of the number rather than going blank.
+ */
+export default function OverviewPage() {
+  const { entityId, ready } = useWorkspace();
+  const [period, setPeriod] = useState("2025-03");
 
-function Tile({ tile }: { tile: MetricTile }) {
-  if (tile.status !== "ok") {
-    // corpus/08 section 3: "not hidden and not blank" -- and per
-    // CLAUDE.md invariant #7, no number is shown here at all, only why.
-    return (
-      <div style={{ border: "1px solid #e2b400", borderRadius: 6, padding: 12, background: "#fffbea" }}>
-        <div style={{ fontSize: 12, color: "#555" }}>{tile.label}</div>
-        <div style={{ fontSize: 14, fontWeight: 600, color: "#7a5b00", marginTop: 4 }}>Not available</div>
-        <div style={{ fontSize: 12, color: "#7a5b00", marginTop: 4 }}>{tile.reason}</div>
-      </div>
-    );
-  }
-
-  const displayValue = isPct(tile.metric)
-    ? `${(Number(tile.value) * 100).toFixed(1)}%`
-    : isDays(tile.metric)
-    ? `${Number(tile.value).toFixed(0)} days`
-    : `₹${inr(tile.value)}`;
+  const tiles = useApiQuery(
+    (token) => getOverviewTiles(token, period, entityId),
+    [period, entityId],
+    { enabled: ready }
+  );
 
   return (
-    <div style={{ border: "1px solid #ddd", borderRadius: 6, padding: 12 }}>
-      <div style={{ fontSize: 12, color: "#555" }}>{tile.label}</div>
-      <div style={{ fontSize: 22, fontWeight: 700, marginTop: 4 }}>{displayValue}</div>
-      {tile.citation && (
-        <div style={{ fontSize: 11, color: "#888", marginTop: 6 }}>
-          v{tile.citation.metric_version} · {tile.citation.row_count} rows · mapping v{tile.citation.mapping_version} ·{" "}
-          <a href={tile.citation.drill_url} style={{ color: "#888" }}>
-            {tile.citation.query_hash}
-          </a>
-          {tile.citation.unmapped_value_inr && Number(tile.citation.unmapped_value_inr) > 0 && (
-            <span> · ₹{inr(tile.citation.unmapped_value_inr)} unmapped</span>
-          )}
-        </div>
+    <>
+      <PageHeader
+        title="Financial overview"
+        description="The nine headline metrics for the selected month. Every figure carries a citation back to the rows it was computed from; anything that did not resolve says why."
+        corpusRef="corpus/08 section 3"
+        actions={
+          <Button variant="secondary" onClick={tiles.reload} busy={tiles.loading} busyLabel="Loading">
+            Refresh
+          </Button>
+        }
+      />
+
+      <Toolbar className="mb-4">
+        <Field label="Period" htmlFor="overview-period">
+          <input
+            id="overview-period"
+            type="month"
+            value={period}
+            onChange={(e) => e.target.value && setPeriod(e.target.value)}
+            className="h-9 rounded-control border border-line-strong bg-surface px-2.5 text-sm tabular-nums"
+          />
+        </Field>
+      </Toolbar>
+
+      {tiles.data && (
+        <StateStrip
+          className="mb-4"
+          period={tiles.data.period}
+          reconciliationStatus={tiles.data.reconciliation_status}
+          mappingVersionId={tiles.data.mapping_version_id}
+        />
       )}
-    </div>
+
+      {tiles.error && (
+        <ErrorState
+          title="The overview could not be loaded"
+          message={tiles.error}
+          hint="This usually means the period has no approved mapping version yet, or the entity has no data loaded. Nothing has changed in your books."
+          onRetry={tiles.reload}
+        />
+      )}
+
+      {!tiles.error && tiles.loading && !tiles.data && <TileSkeleton />}
+
+      {!tiles.error && tiles.data && tiles.data.rows.length === 0 && (
+        <EmptyState
+          title="No metrics were returned for this period"
+          description="Choose another period, or check that data has been uploaded and mapped for this entity."
+        />
+      )}
+
+      {!tiles.error &&
+        tiles.data?.rows.map((row) => (
+          <section key={row.row} className="mb-6">
+            <h2 className="mb-2 text-[13px] font-semibold tracking-[0.04em] text-ink-muted uppercase">
+              {row.row}
+            </h2>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {row.tiles.map((tile) => (
+                <MetricTile key={tile.metric} tile={tile} />
+              ))}
+            </div>
+          </section>
+        ))}
+
+      {tiles.data && (
+        <p className="mt-2 max-w-3xl text-[12px] leading-5 text-ink-faint">
+          corpus/08 section 3 also specifies a prior-month and prior-year change and a twelve-month sparkline on
+          each tile. The overview endpoint does not return them, so they are not shown here rather than being
+          estimated. The monthly pack carries the comparatives it does compute.
+        </p>
+      )}
+    </>
   );
 }
 
-export default function OverviewPage() {
-  const { user, loading: authLoading } = useAuth();
-  const { accessToken } = useAccessToken();
-
-  const [period, setPeriod] = useState("2025-03");
-  const [entityId, setEntityId] = useState(1);
-  const [data, setData] = useState<OverviewResult | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  if (authLoading) return <p>Loading...</p>;
-  if (!user) return <p>Signing in...</p>;
-
-  async function load() {
-    if (!accessToken) return;
-    setBusy(true);
-    setError(null);
-    try {
-      setData(await getOverviewTiles(accessToken, period, entityId));
-    } catch (err: any) {
-      setError(err.message || String(err));
-    } finally {
-      setBusy(false);
-    }
-  }
-
+function TileSkeleton() {
   return (
-    <div>
-      <h1>Financial overview</h1>
-      <p>Corpus/08 section 3: nine headline tiles. Every resolved tile carries a citation that drills to source rows.</p>
-
-      <div style={{ display: "flex", gap: 8, alignItems: "flex-end", marginBottom: 16 }}>
-        <label>
-          Period (YYYY-MM)
-          <input value={period} onChange={(e) => setPeriod(e.target.value)} style={{ display: "block" }} />
-        </label>
-        <label>
-          Entity ID
-          <input type="number" value={entityId} onChange={(e) => setEntityId(Number(e.target.value))} style={{ display: "block" }} />
-        </label>
-        <button onClick={load} disabled={busy}>Load</button>
-      </div>
-
-      {error && (
-        <p style={{ color: "#b00020" }}>
-          <strong>Error:</strong> {error}
-        </p>
-      )}
-
-      {data && (
-        <>
-          <p style={{ fontSize: 13, color: "#555" }}>
-            Reconciliation status: <strong>{data.reconciliation_status}</strong>
-            {data.mapping_version_id != null && <> · Mapping version #{data.mapping_version_id}</>}
-          </p>
-          {data.rows.map((row) => (
-            <div key={row.row} style={{ marginBottom: 20 }}>
-              <h3 style={{ marginBottom: 8 }}>{row.row}</h3>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(180px, 1fr))", gap: 12, maxWidth: 720 }}>
-                {row.tiles.map((tile) => (
-                  <Tile key={tile.metric} tile={tile} />
-                ))}
+    <div aria-busy="true" aria-label="Loading metrics">
+      {[0, 1, 2].map((row) => (
+        <section key={row} className="mb-6">
+          <Skeleton className="mb-2 h-3 w-24" />
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {[0, 1, 2].map((tile) => (
+              <div key={tile} className="rounded-card border border-line bg-surface px-4 py-3.5 shadow-card">
+                <Skeleton className="h-2.5 w-20" />
+                <Skeleton className="mt-3 h-7 w-32" />
+                <Skeleton className="mt-4 h-2.5 w-full" />
               </div>
-            </div>
-          ))}
-        </>
-      )}
+            ))}
+          </div>
+        </section>
+      ))}
     </div>
   );
 }

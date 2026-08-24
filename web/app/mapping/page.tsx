@@ -1,128 +1,349 @@
 "use client";
 
 import { useState } from "react";
-import { useAuth, useAccessToken } from "@workos-inc/authkit-nextjs/components";
-import { createMappingRun, freezeMappingRun, getReviewQueue, FreezeResult, MappingRunResult, QueueRow } from "@/lib/api";
+import {
+  createMappingRun,
+  freezeMappingRun,
+  getReviewQueue,
+  type FreezeResult,
+  type MappingRunResult,
+  type QueueRow,
+} from "@/lib/api";
+import { useApiAction } from "@/lib/useApi";
+import { useWorkspace } from "@/lib/workspace";
+import { exactAmount, formatDate, formatPercent } from "@/lib/format";
+import PageHeader from "@/components/app/PageHeader";
+import Badge from "@/components/ui/Badge";
+import Button from "@/components/ui/Button";
+import { Card, CardBody, CardHeader } from "@/components/ui/Card";
+import { Field, Input, Toolbar } from "@/components/ui/Field";
+import { Table, TBody, TD, TFrame, TH, THead, TR } from "@/components/ui/TableExports";
+import { Callout, EmptyState, ErrorState } from "@/components/ui/States";
 
+const SUSPENSE = "suspense.unmapped";
+
+/**
+ * corpus/06 section 4: extract, apply exact rules, auto-accept what is safe,
+ * queue the rest by rupee value. Section 4.3 requires the running coverage
+ * and the unmapped rupee value to be on screen at all times while reviewing,
+ * which is what the bar above the queue is for -- and it is a rupee figure,
+ * never a percentage on its own.
+ */
 export default function MappingPage() {
-  const { user, loading: authLoading } = useAuth();
-  const { accessToken } = useAccessToken();
-
-  const [entityId, setEntityId] = useState(1);
+  const { entityId, ready } = useWorkspace();
   const [effectiveFrom, setEffectiveFrom] = useState("2023-04-01");
+  const [versionNo, setVersionNo] = useState(1);
+  const [changeReason, setChangeReason] = useState("");
+
   const [run, setRun] = useState<MappingRunResult | null>(null);
   const [queue, setQueue] = useState<QueueRow[] | null>(null);
   const [freeze, setFreeze] = useState<FreezeResult | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
 
-  if (authLoading) return <p>Loading...</p>;
-  if (!user) return <p>Signing in...</p>;
+  const runAction = useApiAction(async (token: string) => {
+    const created = await createMappingRun(token, entityId, versionNo, effectiveFrom, changeReason || undefined);
+    const rows = await getReviewQueue(token, created.mapping_version_id);
+    return { created, rows };
+  });
 
-  async function handleCreateRun() {
-    if (!accessToken) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const r = await createMappingRun(accessToken, entityId, 1, effectiveFrom);
-      setRun(r);
-      const q = await getReviewQueue(accessToken, r.mapping_version_id);
-      setQueue(q);
-    } catch (err: any) {
-      setError(err.message || String(err));
-    } finally {
-      setBusy(false);
-    }
+  const freezeAction = useApiAction(async (token: string, mappingVersionId: number) =>
+    freezeMappingRun(token, mappingVersionId, entityId)
+  );
+
+  async function handleRun() {
+    setFreeze(null);
+    const result = await runAction.run();
+    if (!result) return;
+    setRun(result.created);
+    setQueue(result.rows);
   }
 
   async function handleFreeze() {
-    if (!accessToken || !run) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const f = await freezeMappingRun(accessToken, run.mapping_version_id, entityId);
-      setFreeze(f);
-    } catch (err: any) {
-      setError(err.message || String(err));
-    } finally {
-      setBusy(false);
-    }
+    if (!run) return;
+    const result = await freezeAction.run(run.mapping_version_id);
+    if (result) setFreeze(result);
   }
 
-  const unmappedNow = queue && queue.length > 0 ? queue[queue.length - 1].unmapped_value_inr : null;
+  // corpus/06 section 4.3: the queue is ordered by rupee value descending and
+  // each row carries the running state after it, so the last row is where
+  // coverage stands once the whole queue has been worked through. Read back
+  // from the API, never recomputed here.
+  const finalRow = queue && queue.length > 0 ? queue[queue.length - 1] : null;
 
   return (
-    <div>
-      <h1>Mapping</h1>
-      <p>Extract, apply exact rules, auto-accept, queue the rest -- corpus/06 section 4.</p>
+    <>
+      <PageHeader
+        title="Mapping review"
+        description="Every ledger account gets a canonical class. What the rules can decide safely is auto-accepted; everything else is queued here, largest rupee value first, so the biggest unknowns are answered before the small ones."
+        corpusRef="corpus/06 section 4"
+      />
 
-      <div style={{ display: "flex", gap: 8, alignItems: "flex-end", marginBottom: 16 }}>
-        <label>
-          Entity ID
-          <input type="number" value={entityId} onChange={(e) => setEntityId(Number(e.target.value))} style={{ display: "block" }} />
-        </label>
-        <label>
-          Effective from
-          <input type="date" value={effectiveFrom} onChange={(e) => setEffectiveFrom(e.target.value)} style={{ display: "block" }} />
-        </label>
-        <button onClick={handleCreateRun} disabled={busy}>Run mapping (version 1)</button>
-        {run && <button onClick={handleFreeze} disabled={busy}>Freeze</button>}
-      </div>
+      <Toolbar className="mb-4">
+        <Field label="Effective from" htmlFor="map-effective">
+          <input
+            id="map-effective"
+            type="date"
+            value={effectiveFrom}
+            onChange={(e) => setEffectiveFrom(e.target.value)}
+            className="h-9 rounded-control border border-line-strong bg-surface px-2.5 text-sm tabular-nums"
+          />
+        </Field>
+        <Input
+          label="Version number"
+          type="number"
+          min={1}
+          value={versionNo}
+          onChange={(e) => setVersionNo(Number(e.target.value))}
+          fieldClassName="w-32"
+        />
+        <Input
+          label="Change reason"
+          placeholder="Why this version exists (optional)"
+          value={changeReason}
+          onChange={(e) => setChangeReason(e.target.value)}
+          fieldClassName="min-w-[240px] flex-1"
+        />
+        <Button variant="primary" onClick={handleRun} busy={runAction.busy} busyLabel="Running" disabled={!ready}>
+          Run mapping pass
+        </Button>
+      </Toolbar>
 
-      {error && <p style={{ color: "#b00020" }}>{error}</p>}
-
-      {run && (
-        <p>
-          Version <strong>#{run.mapping_version_id}</strong>: {run.auto_accepted} auto-accepted,{" "}
-          {run.human_approved} human-approved (judgement classes / conflicts), {run.deferred_to_suspense} deferred
-          to suspense.
-        </p>
+      {runAction.error && (
+        <ErrorState
+          title="The mapping pass did not run"
+          message={runAction.error}
+          hint="No mapping version was created. Nothing about the existing mapping has changed."
+          className="mb-4"
+        />
       )}
 
-      {freeze && (
-        <p style={{ color: freeze.passed ? "#1a7f37" : "#b00020" }}>
-          Freeze gate: <strong>{freeze.passed ? "PASS" : "BLOCKED"}</strong> -- {freeze.reason}
-          {freeze.coverage_pct !== null && ` (coverage ${(freeze.coverage_pct * 100).toFixed(2)}%)`}
-        </p>
+      {!run && !runAction.busy && !runAction.error && (
+        <Card>
+          <EmptyState
+            title="No mapping pass has been run in this session"
+            description="Running a pass creates a draft mapping version, applies the rule library to every ledger account, and queues everything the rules could not decide on their own. Nothing is frozen until you freeze it."
+          />
+        </Card>
+      )}
+
+      {run && (
+        <div className="mb-4 grid gap-4 lg:grid-cols-3">
+          <RunSummary run={run} />
+          <FreezeCard
+            run={run}
+            freeze={freeze}
+            busy={freezeAction.busy}
+            error={freezeAction.error}
+            onFreeze={handleFreeze}
+            effectiveFrom={effectiveFrom}
+          />
+        </div>
       )}
 
       {queue && (
-        <>
-          <h2>Review queue -- sorted by rupee value, descending</h2>
-          {unmappedNow !== null && (
-            <p>
-              <strong>Unmapped value right now: ₹{unmappedNow.toLocaleString("en-IN")}</strong> -- the number that
-              must stay on screen, per corpus/06 section 4.3, not a percentage.
-            </p>
+        <Card>
+          <CardHeader
+            title="Review queue"
+            description={`${queue.length} account${queue.length === 1 ? "" : "s"} · ordered by rupee value, descending`}
+          />
+
+          {finalRow && (
+            <div className="sticky top-[52px] z-10 flex flex-wrap items-center gap-x-8 gap-y-2 border-b border-line bg-surface-muted px-5 py-3">
+              <div>
+                <p className="label-caps">Unmapped value, right now</p>
+                <p
+                  className={`figure text-[22px] leading-7 font-semibold ${
+                    finalRow.unmapped_value_inr > 0 ? "text-warn" : "text-pos"
+                  }`}
+                  title="Absolute rupees, as corpus/06 section 4.3 requires: a rupee figure, not a percentage"
+                >
+                  {exactAmount(String(finalRow.unmapped_value_inr))}
+                </p>
+              </div>
+              <div>
+                <p className="label-caps">Coverage after the whole queue</p>
+                <p className="figure text-[22px] leading-7 font-semibold">
+                  {formatPercent(finalRow.running_pct_mapped, { digits: 2 })}
+                </p>
+              </div>
+              <p className="max-w-sm text-[12px] leading-5 text-ink-faint">
+                The rupee figure is the one that decides whether to keep going. A percentage alone does not tell a
+                reviewer what is still at stake.
+              </p>
+            </div>
           )}
-          <table cellPadding={6} style={{ borderCollapse: "collapse", width: "100%", fontSize: 14 }}>
-            <thead>
-              <tr style={{ textAlign: "left", borderBottom: "1px solid #ddd" }}>
-                <th>Ledger</th>
-                <th>Class</th>
-                <th>Source</th>
-                <th>Approved by</th>
-                <th>Value (₹)</th>
-                <th>Running % mapped</th>
-              </tr>
-            </thead>
-            <tbody>
-              {queue.map((row) => (
-                <tr key={row.source_record_id} style={{ borderBottom: "1px solid #f0f0f0" }}>
-                  <td>{row.source_account_name}</td>
-                  <td style={{ color: row.canonical_class === "suspense.unmapped" ? "#b00020" : undefined }}>
-                    {row.canonical_class}
-                  </td>
-                  <td>{row.proposal_source}</td>
-                  <td>{row.approved_by}</td>
-                  <td>{Number(row.period_value_inr).toLocaleString("en-IN")}</td>
-                  <td>{(row.running_pct_mapped * 100).toFixed(1)}%</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </>
+
+          {queue.length === 0 ? (
+            <EmptyState
+              icon="check"
+              title="Nothing was queued"
+              description="Every account was decided by the rule library. There is nothing left for a human to review in this version."
+            />
+          ) : (
+            <TFrame>
+              <Table>
+                <THead>
+                  <TR>
+                    <TH>Ledger account</TH>
+                    <TH>Canonical class</TH>
+                    <TH>Proposed by</TH>
+                    <TH>Approved by</TH>
+                    <TH align="right">Value</TH>
+                    <TH align="right">Running coverage</TH>
+                  </TR>
+                </THead>
+                <TBody>
+                  {queue.map((row) => (
+                    <TR key={row.source_record_id}>
+                      <TD className="font-medium text-ink">{row.source_account_name}</TD>
+                      <TD>
+                        {row.canonical_class === SUSPENSE ? (
+                          <Badge tone="warning" dot>
+                            unmapped — in suspense
+                          </Badge>
+                        ) : (
+                          <span className="font-mono text-[11.5px] text-ink">{row.canonical_class}</span>
+                        )}
+                      </TD>
+                      <TD>{row.proposal_source}</TD>
+                      <TD>{row.approved_by || "—"}</TD>
+                      <TD numeric title="Absolute rupees">
+                        {exactAmount(row.period_value_inr)}
+                      </TD>
+                      <TD numeric>{formatPercent(row.running_pct_mapped, { digits: 2 })}</TD>
+                    </TR>
+                  ))}
+                </TBody>
+              </Table>
+            </TFrame>
+          )}
+        </Card>
       )}
+    </>
+  );
+}
+
+function RunSummary({ run }: { run: MappingRunResult }) {
+  return (
+    <Card className="lg:col-span-2">
+      <CardHeader
+        title={`Mapping version ${run.mapping_version_id}`}
+        description="What the pass decided"
+        actions={<Badge tone="info">draft</Badge>}
+      />
+      <CardBody>
+        <div className="grid gap-4 sm:grid-cols-3">
+          <Stat
+            label="Auto-accepted"
+            value={run.auto_accepted}
+            note="Decided by an exact rule. Never a judgement class."
+          />
+          <Stat
+            label="Needs a human"
+            value={run.human_approved}
+            note="Judgement classes and rule conflicts."
+          />
+          <Stat
+            label="Deferred to suspense"
+            value={run.deferred_to_suspense}
+            note="No confident proposal. Excluded from every statement."
+            tone={run.deferred_to_suspense > 0 ? "warn" : undefined}
+          />
+        </div>
+        <dl className="mt-4 grid gap-4 border-t border-line pt-3 sm:grid-cols-2">
+          <div>
+            <dt className="label-caps">Total value classified</dt>
+            <dd className="figure mt-0.5 text-[16px] font-semibold" title="Absolute rupees">
+              {exactAmount(run.total_value_inr)}
+            </dd>
+          </div>
+          <div>
+            <dt className="label-caps">Mapped value</dt>
+            <dd className="figure mt-0.5 text-[16px] font-semibold" title="Absolute rupees">
+              {exactAmount(run.mapped_value_inr)}
+            </dd>
+          </div>
+        </dl>
+        <p className="mt-3 text-[12px] leading-5 text-ink-faint">
+          Auto-accept never fires on a judgement class — one-off exceptionals, owner remuneration, related party
+          charges, absorption variance, bill discounting and related-party debt always go to a person.
+        </p>
+      </CardBody>
+    </Card>
+  );
+}
+
+function Stat({
+  label,
+  value,
+  note,
+  tone,
+}: {
+  label: string;
+  value: number;
+  note: string;
+  tone?: "warn";
+}) {
+  return (
+    <div>
+      <p className="label-caps">{label}</p>
+      <p className={`figure mt-0.5 text-[24px] leading-8 font-semibold ${tone === "warn" ? "text-warn" : ""}`}>
+        {value}
+      </p>
+      <p className="mt-0.5 text-[12px] leading-4 text-ink-muted">{note}</p>
     </div>
+  );
+}
+
+function FreezeCard({
+  run,
+  freeze,
+  busy,
+  error,
+  onFreeze,
+  effectiveFrom,
+}: {
+  run: MappingRunResult;
+  freeze: FreezeResult | null;
+  busy: boolean;
+  error: string | null;
+  onFreeze: () => void;
+  effectiveFrom: string;
+}) {
+  return (
+    <Card>
+      <CardHeader title="Freeze" description={`Effective from ${formatDate(effectiveFrom)}`} />
+      <CardBody>
+        <p className="text-[13px] leading-5 text-ink-muted">
+          Freezing approves version {run.mapping_version_id} and lets statements and metrics be assembled against it.
+          It is versioned forward, never overwritten — an earlier version keeps producing the numbers it produced.
+        </p>
+
+        <Button variant="primary" className="mt-3 w-full" onClick={onFreeze} busy={busy} busyLabel="Freezing">
+          Freeze this version
+        </Button>
+
+        {error && (
+          <Callout tone="blocking" title="Freeze blocked" className="mt-3">
+            {error}
+          </Callout>
+        )}
+
+        {freeze && (
+          <Callout
+            tone={freeze.passed ? "positive" : "blocking"}
+            title={freeze.passed ? "Frozen" : "Not frozen"}
+            className="mt-3"
+          >
+            <p>{freeze.reason}</p>
+            {freeze.coverage_pct !== null && (
+              <p className="mt-1">Coverage {formatPercent(freeze.coverage_pct, { digits: 2 })}</p>
+            )}
+            {freeze.unmapped_value_inr !== null && (
+              <p className="mt-1">Unmapped {exactAmount(freeze.unmapped_value_inr)}</p>
+            )}
+          </Callout>
+        )}
+      </CardBody>
+    </Card>
   );
 }

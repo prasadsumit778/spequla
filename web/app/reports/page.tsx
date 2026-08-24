@@ -1,11 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useAuth, useAccessToken } from "@workos-inc/authkit-nextjs/components";
+import { useAuth } from "@workos-inc/authkit-nextjs/components";
 import {
-  BlockingException,
-  ReportArtefact,
-  ReportSummary,
   exportReportUrl,
   generateReport,
   getBlockingExceptions,
@@ -13,278 +10,700 @@ import {
   listReports,
   signReport,
   updateCommentary,
+  type BlockingException,
+  type ReportArtefact,
+  type ReportSummary,
 } from "@/lib/api";
+import { useApiAction, useApiQuery } from "@/lib/useApi";
+import { useWorkspace } from "@/lib/workspace";
+import { exactAmount, formatDateTime, formatHoursSince, formatPeriodKey, isNonZeroAmount } from "@/lib/format";
+import PageHeader from "@/components/app/PageHeader";
+import ChartSpec from "@/components/app/ChartSpec";
+import { StatementRow, StatementTable } from "@/components/app/StatementTable";
+import Badge, { ReconciliationBadge, SeverityBadge, StatusBadge } from "@/components/ui/Badge";
+import Button from "@/components/ui/Button";
+import { Card, CardBody, CardHeader } from "@/components/ui/Card";
+import { cn } from "@/components/ui/cn";
+import Disclosure, { CodeBlock } from "@/components/ui/Disclosure";
+import { Field, Textarea, Toolbar } from "@/components/ui/Field";
+import { Callout, EmptyState, ErrorState, Skeleton } from "@/components/ui/States";
 
-const inr = (v: string | number | null | undefined) => (v == null ? "—" : Number(v).toLocaleString("en-IN"));
-
-const statusColor: Record<string, string> = { draft: "#b26a00", signed: "#1a7f37" };
-
-function ChartSpecView({ spec }: { spec: any }) {
-  if (spec.chart_type === "kpi_tile") {
-    return (
-      <div style={{ border: "1px solid #eee", borderRadius: 6, padding: 10, minWidth: 140 }}>
-        <div style={{ fontSize: 11, color: "#888" }}>{spec.title}</div>
-        <div style={{ fontSize: 20, fontWeight: 700 }}>{spec.unit === "INR" ? `₹${inr(spec.value)}` : spec.value ?? "—"}</div>
-        <div style={{ fontSize: 11, color: "#666" }}>
-          MoM {spec.delta_vs_prior_month == null ? "—" : inr(spec.delta_vs_prior_month)} · YoY{" "}
-          {spec.delta_vs_prior_year == null ? "—" : inr(spec.delta_vs_prior_year)}
-        </div>
-      </div>
-    );
-  }
-  if (spec.chart_type === "line") {
-    const points = spec.series?.[0]?.points || [];
-    return (
-      <div style={{ border: "1px solid #eee", borderRadius: 6, padding: 10, fontSize: 11 }}>
-        <div style={{ color: "#888", marginBottom: 4 }}>{spec.title}</div>
-        <div style={{ display: "flex", gap: 6, overflowX: "auto" }}>
-          {points.map((p: any) => (
-            <span key={p.period}>{p.period.slice(2)}: {p.value == null ? "—" : inr(p.value)}</span>
-          ))}
-        </div>
-      </div>
-    );
-  }
-  if (spec.chart_type === "table") {
-    return (
-      <div style={{ border: "1px solid #eee", borderRadius: 6, padding: 10, fontSize: 11, overflowX: "auto" }}>
-        <div style={{ color: "#888", marginBottom: 4 }}>{spec.title}</div>
-        <table cellPadding={3}>
-          <thead><tr>{spec.columns.map((c: string) => <th key={c} style={{ textAlign: "left" }}>{c}</th>)}</tr></thead>
-          <tbody>
-            {spec.rows.map((row: any[], i: number) => (
-              <tr key={i}>{row.map((c, j) => <td key={j}>{typeof c === "number" ? inr(c) : c ?? "—"}</td>)}</tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    );
-  }
-  return <pre style={{ fontSize: 10 }}>{JSON.stringify(spec)}</pre>;
-}
-
+/**
+ * corpus/08 sections 7 and 10: generate, review, sign, export.
+ *
+ * The commentary is written by a human -- this screen is an editor, not a
+ * generator. Signing is gated on open blocking exceptions for the period, and
+ * an override is a written reason that ends up printed in the pack's own data
+ * quality appendix, not a checkbox that makes the gate go away.
+ */
 export default function ReportsPage() {
-  const { user, loading: authLoading } = useAuth();
-  const { accessToken } = useAccessToken();
+  const { user } = useAuth();
+  const { entityId, profile, ready } = useWorkspace();
 
   const [period, setPeriod] = useState("2026-04");
-  const [entityId, setEntityId] = useState(1);
-  const [profile, setProfile] = useState<"manufacturing" | "consumer">("manufacturing");
-  const [reports, setReports] = useState<ReportSummary[]>([]);
-  const [selected, setSelected] = useState<ReportArtefact | null>(null);
-  const [blocking, setBlocking] = useState<BlockingException[]>([]);
-  const [commentary, setCommentary] = useState("");
-  const [overrideReason, setOverrideReason] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [showRaw, setShowRaw] = useState(false);
+  const [selectedId, setSelectedId] = useState<number | null>(null);
 
-  async function refreshList() {
-    if (!accessToken) return;
-    try {
-      setReports(await listReports(accessToken, period, entityId));
-    } catch (e: any) {
-      setError(e.message || String(e));
+  const list = useApiQuery(
+    (token) => listReports(token, period, entityId),
+    [period, entityId],
+    { enabled: ready }
+  );
+
+  const detail = useApiQuery(
+    (token) => getReport(token, selectedId as number),
+    [selectedId],
+    { enabled: selectedId !== null }
+  );
+
+  const blocking = useApiQuery(
+    (token) => getBlockingExceptions(token, selectedId as number),
+    [selectedId, detail.data?.status],
+    { enabled: selectedId !== null && detail.data?.status === "draft" }
+  );
+
+  const generate = useApiAction(generateReport);
+
+  // Selecting the newest generation for the period keeps the screen from
+  // opening on nothing when the period changes.
+  useEffect(() => {
+    if (!list.data) return;
+    if (list.data.length === 0) {
+      setSelectedId(null);
+      return;
     }
-  }
-
-  useEffect(() => { refreshList(); }, [accessToken, period, entityId]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  async function openReport(id: number) {
-    if (!accessToken) return;
-    setError(null);
-    try {
-      const r = await getReport(accessToken, id);
-      setSelected(r);
-      setCommentary(r.commentary || "");
-      setOverrideReason("");
-      if (r.status === "draft") {
-        setBlocking((await getBlockingExceptions(accessToken, id)).blocking_exceptions);
-      } else {
-        setBlocking([]);
-      }
-    } catch (e: any) {
-      setError(e.message || String(e));
+    if (!list.data.some((r) => r.report_artefact_id === selectedId)) {
+      setSelectedId(list.data[0].report_artefact_id);
     }
+  }, [list.data, selectedId]);
+
+  async function handleGenerate() {
+    const summary = await generate.run(period, entityId, profile);
+    if (!summary) return;
+    list.reload();
+    setSelectedId(summary.report_artefact_id);
   }
-
-  async function generate() {
-    if (!accessToken) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const summary = await generateReport(accessToken, period, entityId, profile);
-      await refreshList();
-      await openReport(summary.report_artefact_id);
-    } catch (e: any) {
-      setError(e.message || String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function saveCommentary() {
-    if (!accessToken || !selected) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await updateCommentary(accessToken, selected.report_artefact_id, commentary);
-      await openReport(selected.report_artefact_id);
-    } catch (e: any) {
-      setError(e.message || String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function sign() {
-    if (!accessToken || !selected) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await signReport(accessToken, selected.report_artefact_id, overrideReason || undefined);
-      await refreshList();
-      await openReport(selected.report_artefact_id);
-    } catch (e: any) {
-      setError(e.message || String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  if (authLoading) return <p>Loading...</p>;
-  if (!user) return <p>Signing in...</p>;
-
-  const cover = selected?.sections?.["1_cover"];
-  const financialSummary = selected?.sections?.["3_financial_summary"];
-  const dataQuality = selected?.sections?.["9_data_quality_appendix"];
 
   return (
-    <div>
-      <h1>Reports</h1>
-      <p style={{ fontSize: 13, color: "#666" }}>
-        Corpus/08 section 7: the eight-section monthly management pack. Commentary (section 2) is human-written --
-        this screen is an editor, not a generator. Signing is gated on open blocking exceptions for the period
-        (corpus/08 section 10).
-      </p>
+    <>
+      <PageHeader
+        title="Monthly pack"
+        description="The eight-section management pack for a period. Generate it, write the commentary yourself, then sign it — after which it is fixed and renders against the same snapshot forever."
+        corpusRef="corpus/08 section 7"
+      />
 
-      <div style={{ display: "flex", gap: 8, alignItems: "flex-end", marginBottom: 16 }}>
-        <label>Period<input value={period} onChange={(e) => setPeriod(e.target.value)} placeholder="YYYY-MM" style={{ display: "block", width: 100 }} /></label>
-        <label>Entity ID<input type="number" value={entityId} onChange={(e) => setEntityId(Number(e.target.value))} style={{ display: "block", width: 80 }} /></label>
-        <label>Profile
-          <select value={profile} onChange={(e) => setProfile(e.target.value as any)} style={{ display: "block" }}>
-            <option value="manufacturing">Manufacturing</option>
-            <option value="consumer">Consumer</option>
-          </select>
-        </label>
-        <button onClick={generate} disabled={busy}>Generate pack</button>
+      <Toolbar className="mb-4">
+        <Field label="Period" htmlFor="pack-period">
+          <input
+            id="pack-period"
+            type="month"
+            value={period}
+            onChange={(e) => e.target.value && setPeriod(e.target.value)}
+            className="h-9 rounded-control border border-line-strong bg-surface px-2.5 text-sm tabular-nums"
+          />
+        </Field>
+        <Button variant="primary" onClick={handleGenerate} busy={generate.busy} busyLabel="Generating" disabled={!ready}>
+          Generate a pack
+        </Button>
+        <p className="ml-auto self-center text-[12px] text-ink-faint">
+          Entity {entityId} · {profile === "manufacturing" ? "Manufacturing" : "Consumer"} · both from the top bar
+        </p>
+      </Toolbar>
+
+      {generate.error && (
+        <ErrorState
+          title="No pack was generated"
+          message={generate.error}
+          hint="A period with no approved mapping version cannot produce a pack. Nothing was written."
+          className="mb-4"
+        />
+      )}
+
+      <div className="grid gap-4 lg:grid-cols-[260px_minmax(0,1fr)]">
+        <GenerationList
+          list={list}
+          period={period}
+          selectedId={selectedId}
+          onSelect={setSelectedId}
+        />
+
+        <div className="min-w-0">
+          {detail.error && (
+            <ErrorState title="This pack could not be opened" message={detail.error} onRetry={detail.reload} />
+          )}
+
+          {!detail.error && selectedId === null && (
+            <Card>
+              <EmptyState
+                title={`No pack has been generated for ${formatPeriodKey(period)}`}
+                description="Generating one assembles every section from the frozen mapping and the metric registry. It starts as a draft — nothing is final until someone signs it."
+              />
+            </Card>
+          )}
+
+          {!detail.error && selectedId !== null && !detail.data && detail.loading && (
+            <Card>
+              <CardBody className="space-y-3">
+                <Skeleton className="h-4 w-48" />
+                <Skeleton className="h-24 w-full" />
+                <Skeleton className="h-24 w-full" />
+              </CardBody>
+            </Card>
+          )}
+
+          {!detail.error && detail.data && (
+            <PackDetail
+              pack={detail.data}
+              blockingExceptions={blocking.data?.blocking_exceptions ?? []}
+              blockingLoading={blocking.loading}
+              signerEmail={user?.email ?? ""}
+              onChanged={() => {
+                detail.reload();
+                list.reload();
+                blocking.reload();
+              }}
+            />
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
+/* -------------------------------------------------------- generation list */
+
+function GenerationList({
+  list,
+  period,
+  selectedId,
+  onSelect,
+}: {
+  list: ReturnType<typeof useApiQuery<ReportSummary[]>>;
+  period: string;
+  selectedId: number | null;
+  onSelect: (id: number) => void;
+}) {
+  return (
+    <Card className="self-start">
+      <CardHeader title="Generations" description={formatPeriodKey(period)} />
+
+      {list.error && (
+        <CardBody>
+          <ErrorState title="Could not list packs" message={list.error} onRetry={list.reload} />
+        </CardBody>
+      )}
+
+      {!list.error && !list.data && list.loading && (
+        <CardBody className="space-y-2">
+          <Skeleton className="h-12 w-full" />
+          <Skeleton className="h-12 w-full" />
+        </CardBody>
+      )}
+
+      {!list.error && list.data?.length === 0 && (
+        <CardBody>
+          <p className="text-[13px] text-ink-muted">None yet for this period.</p>
+        </CardBody>
+      )}
+
+      {!list.error && list.data && list.data.length > 0 && (
+        <ul className="p-2">
+          {list.data.map((report) => (
+            <li key={report.report_artefact_id}>
+              <button
+                type="button"
+                onClick={() => onSelect(report.report_artefact_id)}
+                aria-current={selectedId === report.report_artefact_id ? "true" : undefined}
+                className={cn(
+                  "mb-1 w-full rounded-control border px-3 py-2 text-left transition-colors",
+                  selectedId === report.report_artefact_id
+                    ? "border-brand-300 bg-brand-50"
+                    : "border-transparent hover:bg-surface-muted"
+                )}
+              >
+                <span className="flex items-center justify-between gap-2">
+                  <span className="text-[13px] font-medium">#{report.report_artefact_id}</span>
+                  <StatusBadge status={report.status} />
+                </span>
+                <span className="mt-0.5 block text-[11.5px] text-ink-muted">
+                  {formatDateTime(report.generated_at)}
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
+  );
+}
+
+/* --------------------------------------------------------------- the pack */
+
+function PackDetail({
+  pack,
+  blockingExceptions,
+  blockingLoading,
+  signerEmail,
+  onChanged,
+}: {
+  pack: ReportArtefact;
+  blockingExceptions: BlockingException[];
+  blockingLoading: boolean;
+  signerEmail: string;
+  onChanged: () => void;
+}) {
+  const cover = pack.sections?.["1_cover"];
+  const dataQuality = pack.sections?.["9_data_quality_appendix"];
+  const revenue = pack.sections?.["4_revenue_analysis"];
+  const workingCapital = pack.sections?.["6_working_capital"];
+  const cash = pack.sections?.["7_cash"];
+  const margin = pack.sections?.["5_margin_analysis"];
+
+  const isDraft = pack.status === "draft";
+  const kpiTiles = pack.chart_specs.filter((c) => c.chart_type === "kpi_tile");
+  const lineCharts = pack.chart_specs.filter((c) => c.chart_type === "line");
+  const tables = pack.chart_specs.filter((c) => c.chart_type === "table");
+  const others = pack.chart_specs.filter(
+    (c) => !["kpi_tile", "line", "table"].includes(c.chart_type)
+  );
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader
+          title={`Pack #${pack.report_artefact_id}`}
+          description={`${formatPeriodKey(pack.period_key)} · ${pack.profile} · generated by ${pack.generated_by}`}
+          actions={
+            <>
+              <StatusBadge status={pack.status} />
+              {pack.status === "signed" && (
+                <a
+                  href={exportReportUrl(pack.report_artefact_id)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex h-8 items-center rounded-control border border-line-strong px-3 text-[13px] font-medium hover:bg-surface-sunken"
+                >
+                  Export
+                </a>
+              )}
+            </>
+          }
+        />
+
+        {/* Section 1. The cover is the state of the numbers, so it stays at the
+            top rather than being a page nobody reads. */}
+        {cover && (
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-2 border-b border-line bg-surface-muted px-5 py-3">
+            <Meta label="Basis">{cover.basis}</Meta>
+            <Meta label="Reconciliation">
+              <ReconciliationBadge status={cover.reconciliation_status} />
+            </Meta>
+            <Meta label="Mapping">v{cover.mapping_version_no}</Meta>
+            <Meta label="Unmapped">
+              <span
+                className={isNonZeroAmount(cover.unmapped_value_inr) ? "font-semibold text-warn" : "font-semibold text-pos"}
+              >
+                {exactAmount(cover.unmapped_value_inr)}
+              </span>
+            </Meta>
+            {pack.status === "signed" && (
+              <Meta label="Signed">
+                {pack.reviewer} · {formatDateTime(pack.signed_at)}
+              </Meta>
+            )}
+          </div>
+        )}
+
+        {Array.isArray(cover?.freshness) && cover.freshness.length > 0 && (
+          <CardBody className="py-3">
+            <p className="label-caps mb-1.5">Data freshness at generation</p>
+            <ul className="flex flex-wrap gap-x-5 gap-y-1 text-[12.5px] text-ink-muted">
+              {cover.freshness.map((f: any) => (
+                <li key={f.source_system}>
+                  <span className="text-ink">{f.source_system}</span> · {formatHoursSince(f.hours_since)}
+                </li>
+              ))}
+            </ul>
+          </CardBody>
+        )}
+      </Card>
+
+      {/* Section 2 */}
+      <CommentarySection pack={pack} isDraft={isDraft} onChanged={onChanged} />
+
+      {/* Section 3 */}
+      <Section number={3} title="Financial summary" description="Headline metrics against the prior month and prior year">
+        {kpiTiles.length === 0 ? (
+          <Callout tone="warning">
+            No headline metric resolved for this period, so no tile is shown. A tile is never shown without a value.
+          </Callout>
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {kpiTiles.map((spec, i) => (
+              <ChartSpec key={i} spec={spec} />
+            ))}
+          </div>
+        )}
+      </Section>
+
+      {/* Section 4 */}
+      {revenue && (
+        <Section number={4} title="Revenue analysis" description="Entity level, with what is not broken down stated plainly">
+          <UnavailableList reasons={revenue.unavailable_reasons} />
+        </Section>
+      )}
+
+      {/* Section 5 */}
+      {(tables.length > 0 || margin) && (
+        <Section number={5} title="Margin analysis" description="Cost line movements against the prior period">
+          {tables.map((spec, i) => (
+            <ChartSpec key={i} spec={spec} />
+          ))}
+          {margin?.gross_margin_bridge === null && margin?.gross_margin_bridge_reason && (
+            <Callout tone="warning" className="mt-3" title="No gross margin bridge">
+              {margin.gross_margin_bridge_reason}
+            </Callout>
+          )}
+        </Section>
+      )}
+
+      {/* Sections 6 and 7 */}
+      {lineCharts.length > 0 && (
+        <Section number={6} title="Working capital and cash" description="Trailing months, per metric">
+          <div className="grid gap-3 xl:grid-cols-2">
+            {lineCharts.map((spec, i) => (
+              <ChartSpec key={i} spec={spec} />
+            ))}
+          </div>
+          <UnavailableList reasons={workingCapital?.unavailable_reasons} className="mt-3" />
+          <UnavailableList reasons={cash?.unavailable_reasons} />
+        </Section>
+      )}
+
+      {others.length > 0 && (
+        <Section number={8} title="Other specifications" description="Stored chart specs this app has no renderer for">
+          <div className="space-y-3">
+            {others.map((spec, i) => (
+              <ChartSpec key={i} spec={spec} />
+            ))}
+          </div>
+        </Section>
+      )}
+
+      {/* Section 9 */}
+      {dataQuality && <DataQualityAppendix appendix={dataQuality} />}
+
+      {/* Sign-off */}
+      {isDraft && (
+        <SignOff
+          pack={pack}
+          blockingExceptions={blockingExceptions}
+          blockingLoading={blockingLoading}
+          signerEmail={signerEmail}
+          onChanged={onChanged}
+        />
+      )}
+
+      <Card>
+        <CardBody>
+          <Disclosure label="View the stored artefact" openLabel="Hide the stored artefact">
+            <p className="mb-2 text-[12px] text-ink-muted">
+              Content hash <span className="font-mono">{pack.content_hash}</span>. This is what was persisted; the
+              screen above is a rendering of it.
+            </p>
+            <CodeBlock>{JSON.stringify(pack.sections, null, 2)}</CodeBlock>
+          </Disclosure>
+        </CardBody>
+      </Card>
+    </div>
+  );
+}
+
+function Meta({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="label-caps">{label}</span>
+      <span className="text-[13px] text-ink">{children}</span>
+    </div>
+  );
+}
+
+function Section({
+  number,
+  title,
+  description,
+  children,
+}: {
+  number: number;
+  title: string;
+  description?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <Card>
+      <CardHeader
+        title={
+          <span className="flex items-baseline gap-2">
+            <span className="text-[12px] font-semibold text-ink-faint">{number}</span>
+            {title}
+          </span>
+        }
+        description={description}
+      />
+      <CardBody>{children}</CardBody>
+    </Card>
+  );
+}
+
+function UnavailableList({ reasons, className }: { reasons?: string[]; className?: string }) {
+  if (!reasons || reasons.length === 0) return null;
+  return (
+    <div className={cn("rounded-control border border-warn-line bg-warn-soft px-3 py-2.5", className)}>
+      <p className="text-[12.5px] font-semibold text-warn">Not broken down, and why</p>
+      <ul className="mt-1 space-y-1">
+        {reasons.map((reason) => (
+          <li key={reason} className="text-[12.5px] leading-5 text-ink-soft">
+            {reason}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------- commentary */
+
+function CommentarySection({
+  pack,
+  isDraft,
+  onChanged,
+}: {
+  pack: ReportArtefact;
+  isDraft: boolean;
+  onChanged: () => void;
+}) {
+  const [commentary, setCommentary] = useState(pack.commentary || "");
+  const [saved, setSaved] = useState(false);
+  const save = useApiAction(updateCommentary);
+
+  useEffect(() => {
+    setCommentary(pack.commentary || "");
+    setSaved(false);
+  }, [pack.report_artefact_id, pack.commentary]);
+
+  async function handleSave() {
+    const result = await save.run(pack.report_artefact_id, commentary);
+    if (result) {
+      setSaved(true);
+      onChanged();
+    }
+  }
+
+  return (
+    <Section number={2} title="Executive summary" description="Written by a person. Nothing here is generated.">
+      {isDraft ? (
+        <>
+          <Textarea
+            value={commentary}
+            onChange={(e) => {
+              setCommentary(e.target.value);
+              setSaved(false);
+            }}
+            rows={6}
+            placeholder="Six to eight points a board would want in front of the numbers."
+          />
+          <div className="mt-2 flex flex-wrap items-center gap-3">
+            <Button variant="primary" size="sm" onClick={handleSave} busy={save.busy} busyLabel="Saving">
+              Save commentary
+            </Button>
+            {saved && !save.busy && <span className="text-[12.5px] text-pos">Saved.</span>}
+            <span className="text-[12px] text-ink-faint">Editable until the pack is signed.</span>
+          </div>
+          {save.error && (
+            <ErrorState title="The commentary was not saved" message={save.error} className="mt-3" />
+          )}
+        </>
+      ) : pack.commentary ? (
+        <p className="text-[14px] leading-6 whitespace-pre-wrap text-ink-soft">{pack.commentary}</p>
+      ) : (
+        <p className="text-[13px] text-ink-faint">No commentary was written before this pack was signed.</p>
+      )}
+    </Section>
+  );
+}
+
+/* ------------------------------------------------------- data quality (9) */
+
+function DataQualityAppendix({ appendix }: { appendix: any }) {
+  const openExceptions: any[] = appendix.open_exceptions ?? [];
+  const limitations: string[] = appendix.known_limitations ?? [];
+  const residuals: any[] = appendix.reconciliation_residuals ?? [];
+
+  return (
+    <Section
+      number={9}
+      title="Data quality appendix"
+      description="Everything a reader should know before trusting a figure above"
+    >
+      <div className="flex flex-wrap gap-6">
+        <div>
+          <p className="label-caps">Unmapped value</p>
+          <p
+            className={cn(
+              "figure mt-0.5 text-[20px] font-semibold",
+              isNonZeroAmount(appendix.unmapped_value_inr) ? "text-warn" : "text-pos"
+            )}
+          >
+            {exactAmount(appendix.unmapped_value_inr)}
+          </p>
+        </div>
+        <div>
+          <p className="label-caps">Open exceptions</p>
+          <p className="figure mt-0.5 text-[20px] font-semibold">{openExceptions.length}</p>
+        </div>
       </div>
 
-      {error && <p style={{ color: "#b00020" }}><strong>Error:</strong> {error}</p>}
+      {openExceptions.length > 0 && (
+        <ul className="mt-4 divide-y divide-line rounded-control border border-line">
+          {openExceptions.map((e, i) => (
+            <li key={i} className="flex flex-wrap items-start justify-between gap-3 px-3 py-2">
+              <span className="flex min-w-0 items-start gap-2">
+                <SeverityBadge severity={e.severity} />
+                <span className="text-[12.5px] text-ink-soft">{e.description}</span>
+              </span>
+              <span className="figure text-[12.5px] font-medium whitespace-nowrap">
+                {exactAmount(e.value_inr)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
 
-      <div style={{ display: "flex", gap: 24 }}>
-        <div style={{ minWidth: 220 }}>
-          <h3 style={{ fontSize: 13 }}>Generations for {period}</h3>
-          {reports.length === 0 && <p style={{ fontSize: 12, color: "#888" }}>None yet.</p>}
-          <ul style={{ listStyle: "none", padding: 0, fontSize: 12 }}>
-            {reports.map((r) => (
-              <li key={r.report_artefact_id} style={{ marginBottom: 6 }}>
-                <button onClick={() => openReport(r.report_artefact_id)}
-                          style={{ textAlign: "left", width: "100%", background: selected?.report_artefact_id === r.report_artefact_id ? "#f0f0f0" : "transparent" }}>
-                  #{r.report_artefact_id} · <span style={{ color: statusColor[r.status] }}>{r.status}</span>
-                  <br />{r.generated_at?.slice(0, 16)}
-                </button>
+      {residuals.length > 0 && (
+        <div className="mt-4">
+          <p className="label-caps mb-1.5">Reconciliation residuals</p>
+          <ul className="space-y-1 text-[12.5px] text-ink-muted">
+            {residuals.map((r, i) => (
+              <li key={i}>
+                {r.check_type}: {r.status} · residual {exactAmount(r.residual_inr)}
               </li>
             ))}
           </ul>
         </div>
+      )}
 
-        {selected && (
-          <div style={{ flex: 1, maxWidth: 720 }}>
-            <div style={{ fontSize: 12, color: "#888", marginBottom: 8 }}>
-              #{selected.report_artefact_id} · <span style={{ color: statusColor[selected.status] }}>{selected.status}</span>
-              {selected.status === "signed" && <> · reviewer: {selected.reviewer} · signed {selected.signed_at?.slice(0, 16)}</>}
-              {" · "}<a href={exportReportUrl(selected.report_artefact_id)} target="_blank" rel="noreferrer">export</a>
-            </div>
-
-            <h3>1. Cover</h3>
-            {cover && (
-              <div style={{ fontSize: 12 }}>
-                <p>Period {cover.period_key} · basis {cover.basis} · reconciliation: {cover.reconciliation_status}</p>
-                <p>Unmapped: ₹{inr(cover.unmapped_value_inr)} · mapping v{cover.mapping_version_no}</p>
-              </div>
-            )}
-
-            <h3>2. Executive summary</h3>
-            {selected.status === "draft" ? (
-              <div>
-                <textarea value={commentary} onChange={(e) => setCommentary(e.target.value)}
-                            placeholder="Six to eight bullet points, written by a human."
-                            style={{ width: "100%", minHeight: 100, fontFamily: "inherit" }} />
-                <div><button onClick={saveCommentary} disabled={busy}>Save commentary</button></div>
-              </div>
-            ) : (
-              <pre style={{ whiteSpace: "pre-wrap", fontSize: 13 }}>{selected.commentary || "(none written)"}</pre>
-            )}
-
-            <h3>3. Financial summary</h3>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-              {selected.chart_specs.filter((c) => c.chart_type === "kpi_tile").map((c, i) => (
-                <ChartSpecView key={i} spec={c} />
-              ))}
-            </div>
-
-            <h3>6. Working capital trends / 7. Cash</h3>
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              {selected.chart_specs.filter((c) => c.chart_type === "line").map((c, i) => (
-                <ChartSpecView key={i} spec={c} />
-              ))}
-            </div>
-
-            <h3>5. Margin analysis</h3>
-            {selected.chart_specs.filter((c) => c.chart_type === "table").map((c, i) => (
-              <ChartSpecView key={i} spec={c} />
+      {limitations.length > 0 && (
+        <div className="mt-4">
+          <p className="label-caps mb-1.5">Known limitations</p>
+          <ul className="space-y-1">
+            {limitations.map((l, i) => (
+              <li key={i} className="text-[12.5px] leading-5 text-ink-soft">
+                {l}
+              </li>
             ))}
+          </ul>
+        </div>
+      )}
 
-            <h3>9. Data quality appendix</h3>
-            {dataQuality && (
-              <div style={{ fontSize: 12 }}>
-                <p>{dataQuality.open_exceptions?.length ?? 0} open exception(s) · unmapped ₹{inr(dataQuality.unmapped_value_inr)}</p>
-                {dataQuality.known_limitations?.length > 0 && (
-                  <ul>{dataQuality.known_limitations.map((l: string, i: number) => <li key={i}>{l}</li>)}</ul>
-                )}
-                {dataQuality.signoff_override && (
-                  <p style={{ color: "#b26a00" }}>
-                    Signed with override: {dataQuality.signoff_override.reason} (by {dataQuality.signoff_override.by})
-                  </p>
-                )}
-              </div>
-            )}
+      {appendix.signoff_override && (
+        <Callout tone="warning" className="mt-4" title="Signed with an override">
+          {appendix.signoff_override.reason} — {appendix.signoff_override.by}
+        </Callout>
+      )}
+    </Section>
+  );
+}
 
-            {selected.status === "draft" && (
-              <div style={{ marginTop: 16, border: "1px solid #ddd", borderRadius: 6, padding: 12 }}>
-                <h3 style={{ marginTop: 0 }}>Sign off</h3>
-                {blocking.length > 0 && (
-                  <div style={{ fontSize: 12, color: "#b00020", marginBottom: 8 }}>
-                    <p><strong>{blocking.length} open blocking exception(s) for {selected.period_key}</strong> -- signing requires a written override reason.</p>
-                    <ul>{blocking.map((b) => <li key={b.exception_id}>{b.description}</li>)}</ul>
-                    <input value={overrideReason} onChange={(e) => setOverrideReason(e.target.value)}
-                             placeholder="Override reason (logged, appears in section 9)" style={{ width: "100%" }} />
-                  </div>
-                )}
-                <button onClick={sign} disabled={busy || (blocking.length > 0 && !overrideReason.trim())}>
-                  Sign as {user.email}
-                </button>
-              </div>
-            )}
+/* --------------------------------------------------------------- sign-off */
 
-            <div style={{ marginTop: 16 }}>
-              <button onClick={() => setShowRaw(!showRaw)} style={{ fontSize: 12 }}>{showRaw ? "Hide" : "View"} full pack JSON</button>
-              {showRaw && <pre style={{ fontSize: 10, background: "#f7f7f7", padding: 8, overflowX: "auto", maxHeight: 400 }}>{JSON.stringify(selected.sections, null, 2)}</pre>}
-            </div>
-          </div>
+function SignOff({
+  pack,
+  blockingExceptions,
+  blockingLoading,
+  signerEmail,
+  onChanged,
+}: {
+  pack: ReportArtefact;
+  blockingExceptions: BlockingException[];
+  blockingLoading: boolean;
+  signerEmail: string;
+  onChanged: () => void;
+}) {
+  const [overrideReason, setOverrideReason] = useState("");
+  const sign = useApiAction(signReport);
+
+  const blocked = blockingExceptions.length > 0;
+  const canSign = !blocked || overrideReason.trim().length > 0;
+
+  async function handleSign() {
+    const result = await sign.run(pack.report_artefact_id, overrideReason.trim() || undefined);
+    if (result) onChanged();
+  }
+
+  return (
+    <Card className={blocked ? "border-warn-line" : undefined}>
+      <CardHeader
+        title="Sign off"
+        description="Signing fixes this pack. It renders against this snapshot from then on."
+      />
+      <CardBody>
+        {blockingLoading && <Skeleton className="h-4 w-56" />}
+
+        {!blockingLoading && !blocked && (
+          <Callout tone="positive">
+            No blocking exception is open for {formatPeriodKey(pack.period_key)}. This pack can be signed as it
+            stands.
+          </Callout>
         )}
-      </div>
-    </div>
+
+        {!blockingLoading && blocked && (
+          <>
+            <Callout
+              tone="blocking"
+              title={`${blockingExceptions.length} blocking exception${
+                blockingExceptions.length === 1 ? "" : "s"
+              } open for ${formatPeriodKey(pack.period_key)}`}
+            >
+              A blocking exception blocks output. Signing anyway requires a written reason, which is logged and
+              printed in section 9 of this pack.
+            </Callout>
+
+            <StatementTable className="mt-3">
+              {blockingExceptions.map((exception) => (
+                <StatementRow
+                  key={exception.exception_id}
+                  label={exception.description}
+                  note={exception.exception_class}
+                  value={exactAmount(exception.value_inr)}
+                />
+              ))}
+            </StatementTable>
+
+            <div className="mt-3">
+              <label htmlFor="override-reason" className="label-caps mb-1 block">
+                Override reason — required to sign
+              </label>
+              <input
+                id="override-reason"
+                value={overrideReason}
+                onChange={(e) => setOverrideReason(e.target.value)}
+                placeholder="Why this pack is being signed with these exceptions still open"
+                className="h-9 w-full rounded-control border border-line-strong bg-surface px-3 text-sm"
+              />
+            </div>
+          </>
+        )}
+
+        {sign.error && <ErrorState title="This pack was not signed" message={sign.error} className="mt-3" />}
+
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <Button variant="primary" onClick={handleSign} disabled={!canSign} busy={sign.busy} busyLabel="Signing">
+            Sign as {signerEmail || "the signed-in user"}
+          </Button>
+          <span className="text-[12px] text-ink-faint">
+            The signature records you by name. It is not an independent review, and the audit trail says so.
+          </span>
+        </div>
+      </CardBody>
+    </Card>
   );
 }

@@ -1,13 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useAuth, useAccessToken } from "@workos-inc/authkit-nextjs/components";
+import { useState } from "react";
+import { useAuth } from "@workos-inc/authkit-nextjs/components";
 import {
-  AccessGrant,
-  AuditLogRow,
-  ModelCost,
-  RestoreRehearsalResult,
-  TenantSummary,
   createAccessGrant,
   deleteTenant,
   getAccessGrants,
@@ -16,262 +11,537 @@ import {
   listTenants,
   revokeAccessGrant,
   runRestoreRehearsal,
+  type RestoreRehearsalResult,
+  type TenantSummary,
 } from "@/lib/api";
+import { useApiAction, useApiQuery } from "@/lib/useApi";
+import { exactAmount, formatCount, formatDate, formatDateTime } from "@/lib/format";
+import { roleLabel } from "@/components/app/AppShell";
+import PageHeader from "@/components/app/PageHeader";
+import Badge from "@/components/ui/Badge";
+import Button from "@/components/ui/Button";
+import { Card, CardBody, CardHeader } from "@/components/ui/Card";
+import Disclosure, { CodeBlock } from "@/components/ui/Disclosure";
+import { Input, Select } from "@/components/ui/Field";
+import { Table, TBody, TD, TFrame, TH, THead, TR } from "@/components/ui/TableExports";
+import { Callout, EmptyState, ErrorState, Skeleton, SkeletonTable } from "@/components/ui/States";
 
+/** corpus/02 section 2: four roles, no more in the MVP. */
 const ROLES = [
-  { role: "promoter", who: "Owner, MD or CEO", sees: "Financial overview, Ask, Reports. No mapping screens, no exception queue." },
-  { role: "client_finance_lead", who: "CFO, controller or CA", sees: "Everything except SPEQULA internal admin." },
-  { role: "spequla_analyst", who: "SPEQULA, for pilot one", sees: "Everything, plus the exception queue and the audit log." },
-  { role: "admin", who: "Engineering", sees: "System configuration. No default access to client data." },
+  {
+    role: "promoter",
+    who: "Owner, MD or CEO",
+    sees: "Financial overview, Ask and the pack. No mapping screens and no exception queue.",
+  },
+  {
+    role: "client_finance_lead",
+    who: "CFO, financial controller, or the CA",
+    sees: "Everything except SPEQULA's own internal administration.",
+  },
+  {
+    role: "spequla_analyst",
+    who: "SPEQULA, for pilot one",
+    sees: "Everything, plus the exception queue and the audit log.",
+  },
+  {
+    role: "admin",
+    who: "Engineering",
+    sees: "System configuration. No default access to client data.",
+  },
 ];
 
-function GrantsPanel({ accessToken, tenantId }: { accessToken: string; tenantId: string }) {
-  const [grants, setGrants] = useState<AccessGrant[]>([]);
-  const [employeeUserId, setEmployeeUserId] = useState("");
-  const [employeeName, setEmployeeName] = useState("");
-  const [reason, setReason] = useState("");
-  const [hours, setHours] = useState(24);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+export default function SettingsPage() {
+  const { role } = useAuth();
+  const tenants = useApiQuery((token) => listTenants(token), []);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  async function refresh() {
-    setGrants(await getAccessGrants(accessToken, tenantId));
-  }
-  useEffect(() => { refresh(); }, [tenantId]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  async function submitGrant() {
-    setBusy(true);
-    setError(null);
-    try {
-      const expiresAt = new Date(Date.now() + hours * 3600 * 1000).toISOString();
-      await createAccessGrant(accessToken, tenantId, employeeUserId, employeeName, reason, expiresAt);
-      setEmployeeUserId(""); setEmployeeName(""); setReason("");
-      await refresh();
-    } catch (e: any) {
-      setError(e.message || String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function doRevoke(grantId: number) {
-    setBusy(true);
-    try {
-      await revokeAccessGrant(accessToken, grantId);
-      await refresh();
-    } catch (e: any) {
-      setError(e.message || String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
+  const selected =
+    tenants.data?.find((t) => t.tenant_id === selectedId) ?? tenants.data?.[0] ?? null;
 
   return (
-    <div>
-      <h3>Employee access grants</h3>
-      <p style={{ fontSize: 12, color: "#666" }}>
-        Corpus/02 section 7: "Employee-level access to client data is time-bound, named and logged." Every grant expires;
-        there is no standing access.
-      </p>
-      <div style={{ display: "flex", gap: 8, alignItems: "flex-end", marginBottom: 12, flexWrap: "wrap" }}>
-        <label>User id<input value={employeeUserId} onChange={(e) => setEmployeeUserId(e.target.value)} style={{ display: "block", width: 140 }} /></label>
-        <label>Name<input value={employeeName} onChange={(e) => setEmployeeName(e.target.value)} style={{ display: "block", width: 140 }} /></label>
-        <label>Reason<input value={reason} onChange={(e) => setReason(e.target.value)} style={{ display: "block", width: 200 }} /></label>
-        <label>Hours<input type="number" value={hours} onChange={(e) => setHours(Number(e.target.value))} style={{ display: "block", width: 70 }} /></label>
-        <button onClick={submitGrant} disabled={busy || !employeeUserId || !employeeName || !reason}>Grant access</button>
-      </div>
-      {error && <p style={{ color: "#b00020", fontSize: 12 }}>{error}</p>}
-      <table cellPadding={6} style={{ borderCollapse: "collapse", fontSize: 13, width: "100%" }}>
-        <thead><tr style={{ borderBottom: "1px solid #ddd", textAlign: "left" }}>
-          <th>Employee</th><th>Reason</th><th>Granted</th><th>Expires</th><th>Status</th><th></th>
-        </tr></thead>
-        <tbody>
-          {grants.map((g) => (
-            <tr key={g.grant_id} style={{ borderBottom: "1px solid #f0f0f0" }}>
-              <td>{g.employee_name} ({g.employee_user_id})</td>
-              <td>{g.reason}</td>
-              <td>{g.granted_at.slice(0, 16)}</td>
-              <td>{g.expires_at.slice(0, 16)}</td>
-              <td style={{ color: g.is_active ? "#1a7f37" : "#888" }}>{g.is_active ? "active" : (g.revoked_at ? "revoked" : "expired")}</td>
-              <td>{g.is_active && <button onClick={() => doRevoke(g.grant_id)} disabled={busy}>Revoke</button>}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
+    <>
+      <PageHeader
+        title="Settings"
+        description="Who can see what, who has been given temporary access to this company's data, and every action that has been taken on it."
+        corpusRef="corpus/02 sections 2 and 7"
+      />
 
-function AuditLogPanel({ accessToken, tenantId }: { accessToken: string; tenantId: string }) {
-  const [rows, setRows] = useState<AuditLogRow[]>([]);
-  useEffect(() => { getAuditLog(accessToken, tenantId).then(setRows); }, [accessToken, tenantId]);
-  return (
-    <div>
-      <h3>Audit log</h3>
-      {rows.length === 0 && <p style={{ fontSize: 12, color: "#888" }}>No audited actions for this tenant yet.</p>}
-      <table cellPadding={6} style={{ borderCollapse: "collapse", fontSize: 12, width: "100%" }}>
-        <thead><tr style={{ borderBottom: "1px solid #ddd", textAlign: "left" }}>
-          <th>When</th><th>Actor</th><th>Action</th><th>Object</th><th>Detail</th>
-        </tr></thead>
-        <tbody>
-          {rows.map((r) => (
-            <tr key={r.audit_id} style={{ borderBottom: "1px solid #f5f5f5" }}>
-              <td>{r.occurred_at.slice(0, 19)}</td>
-              <td>{r.actor}</td>
-              <td>{r.action}</td>
-              <td>{r.object_type}{r.object_ref ? ` #${r.object_ref}` : ""}</td>
-              <td style={{ maxWidth: 300, overflowX: "auto" }}>{r.detail ? JSON.stringify(r.detail) : ""}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function OperationsPanel({ accessToken, tenant }: { accessToken: string; tenant: TenantSummary }) {
-  const [cost, setCost] = useState<ModelCost | null>(null);
-  const [rehearsal, setRehearsal] = useState<RestoreRehearsalResult | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [confirmName, setConfirmName] = useState("");
-  const [deleteReason, setDeleteReason] = useState("");
-  const [deleted, setDeleted] = useState(false);
-
-  useEffect(() => { getModelCost(accessToken, tenant.tenant_id).then(setCost); }, [accessToken, tenant.tenant_id]);
-
-  async function doRehearsal() {
-    setBusy(true);
-    setError(null);
-    try {
-      setRehearsal(await runRestoreRehearsal(accessToken, tenant.tenant_id));
-    } catch (e: any) {
-      setError(e.message || String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function doDelete() {
-    setBusy(true);
-    setError(null);
-    try {
-      await deleteTenant(accessToken, tenant.tenant_id, deleteReason);
-      setDeleted(true);
-    } catch (e: any) {
-      setError(e.message || String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div>
-      <h3>Model cost</h3>
-      {cost && (
-        <p style={{ fontSize: 13 }}>
-          {cost.total_queries} quer{cost.total_queries === 1 ? "y" : "ies"} logged, {cost.priced_queries} with recorded cost.
-          Total: ₹{Number(cost.total_cost_inr).toLocaleString("en-IN")}
-          {cost.priced_queries === 0 && (
-            <span style={{ color: "#888" }}> -- no model is configured yet (src/semantic/model_client.py), so nothing has a real cost.</span>
-          )}
-        </p>
-      )}
-
-      <h3>Restore rehearsal</h3>
-      <p style={{ fontSize: 12, color: "#666" }}>
-        Clones every table in this tenant's schema into a throwaway schema, verifies row counts, then drops the clone.
-        Point-in-time recovery itself is a Supabase platform feature; this proves the data is fully reconstructible.
-      </p>
-      <button onClick={doRehearsal} disabled={busy}>Run rehearsal</button>
-      {rehearsal && (
-        <div style={{ marginTop: 8, fontSize: 12 }}>
-          <strong style={{ color: rehearsal.passed ? "#1a7f37" : "#b00020" }}>{rehearsal.passed ? "Passed" : "Failed"}</strong>
-          {" "}-- {rehearsal.tables.length} tables checked.
-        </div>
-      )}
-
-      {!tenant.is_synthetic && (
-        <div style={{ marginTop: 24, border: "1px solid #b00020", borderRadius: 6, padding: 12 }}>
-          <h3 style={{ marginTop: 0, color: "#b00020" }}>Delete tenant</h3>
-          <p style={{ fontSize: 12 }}>
-            Irreversible. Drops the tenant's entire schema and purges PII-bearing records. No retention period is
-            enforced automatically -- this is the only path, and it only runs on an explicit named request.
+      <Card className="mb-4">
+        <CardHeader
+          title="Roles"
+          description="Four roles, no more in the MVP"
+          actions={role ? <Badge tone="info">You are {roleLabel(role)}</Badge> : null}
+        />
+        <TFrame>
+          <Table>
+            <THead>
+              <TR>
+                <TH>Role</TH>
+                <TH>Who</TH>
+                <TH>What they see</TH>
+              </TR>
+            </THead>
+            <TBody>
+              {ROLES.map((r) => (
+                <TR key={r.role} selected={r.role === role}>
+                  <TD className="font-medium whitespace-nowrap text-ink">{roleLabel(r.role)}</TD>
+                  <TD className="whitespace-nowrap">{r.who}</TD>
+                  <TD>{r.sees}</TD>
+                </TR>
+              ))}
+            </TBody>
+          </Table>
+        </TFrame>
+        <CardBody className="border-t border-line">
+          <p className="text-[12.5px] leading-5 text-ink-muted">
+            Employee access to client data is time-bound, named and logged. There is no standing access — every grant
+            below expires.
           </p>
-          {deleted ? (
-            <p style={{ color: "#1a7f37" }}>Deleted.</p>
+        </CardBody>
+      </Card>
+
+      {tenants.error && (
+        <Card>
+          <CardBody>
+            <ErrorState
+              title="Tenant administration is not available"
+              message={tenants.error}
+              hint="Grants, the audit log and tenant deletion are administrator-only. If you are not an administrator, this is expected and everything else on this screen still applies to you."
+              onRetry={tenants.reload}
+            />
+          </CardBody>
+        </Card>
+      )}
+
+      {!tenants.error && !tenants.data && tenants.loading && (
+        <Card>
+          <CardBody className="space-y-3">
+            <Skeleton className="h-4 w-40" />
+            <Skeleton className="h-28 w-full" />
+          </CardBody>
+        </Card>
+      )}
+
+      {!tenants.error && tenants.data?.length === 0 && (
+        <Card>
+          <EmptyState title="No tenants" description="No tenant is visible to your account." />
+        </Card>
+      )}
+
+      {!tenants.error && tenants.data && tenants.data.length > 0 && selected && (
+        <div className="space-y-4">
+          <Card>
+            <CardHeader title="Tenant" description="Everything below applies to the tenant selected here" />
+            <CardBody>
+              <div className="flex flex-wrap items-end gap-3">
+                <Select
+                  label="Tenant"
+                  value={selected.tenant_id}
+                  onChange={(e) => setSelectedId(e.target.value)}
+                  fieldClassName="min-w-[240px]"
+                >
+                  {tenants.data.map((t) => (
+                    <option key={t.tenant_id} value={t.tenant_id}>
+                      {t.name}
+                      {t.deleted_at ? " (deleted)" : ""}
+                    </option>
+                  ))}
+                </Select>
+                <div className="flex flex-wrap gap-2 pb-1">
+                  {selected.is_synthetic && <Badge tone="info">synthetic data</Badge>}
+                  {selected.deleted_at && <Badge tone="blocking">deleted {formatDate(selected.deleted_at)}</Badge>}
+                  <Badge tone="neutral">schema {selected.schema_name}</Badge>
+                </div>
+              </div>
+            </CardBody>
+          </Card>
+
+          {selected.deleted_at ? (
+            <Card>
+              <EmptyState
+                title="This tenant was deleted"
+                description={`Deleted on ${formatDate(selected.deleted_at)}. Its schema and PII-bearing records were purged.`}
+              />
+            </Card>
           ) : (
             <>
-              <input placeholder="Reason" value={deleteReason} onChange={(e) => setDeleteReason(e.target.value)} style={{ display: "block", width: "100%", marginBottom: 8 }} />
-              <input placeholder={`Type "${tenant.name}" to confirm`} value={confirmName} onChange={(e) => setConfirmName(e.target.value)} style={{ display: "block", width: "100%", marginBottom: 8 }} />
-              <button onClick={doDelete} disabled={busy || !deleteReason || confirmName !== tenant.name} style={{ color: "#b00020" }}>
-                Delete {tenant.name}
-              </button>
+              <GrantsPanel tenant={selected} />
+              <AuditLogPanel tenant={selected} />
+              <OperationsPanel tenant={selected} />
             </>
           )}
         </div>
       )}
-      {error && <p style={{ color: "#b00020", fontSize: 12 }}>{error}</p>}
-    </div>
+    </>
   );
 }
 
-export default function SettingsPage() {
-  const { user, loading: authLoading } = useAuth();
-  const { accessToken } = useAccessToken();
-  const [tenants, setTenants] = useState<TenantSummary[] | null>(null);
-  const [selected, setSelected] = useState<TenantSummary | null>(null);
-  const [forbidden, setForbidden] = useState(false);
+/* ------------------------------------------------------------------ grants */
 
-  useEffect(() => {
-    if (!accessToken) return;
-    listTenants(accessToken)
-      .then((t) => { setTenants(t); if (t.length > 0) setSelected(t[0]); })
-      .catch((e) => { if (String(e.message || e).includes("403")) setForbidden(true); });
-  }, [accessToken]);
+function GrantsPanel({ tenant }: { tenant: TenantSummary }) {
+  const grants = useApiQuery((token) => getAccessGrants(token, tenant.tenant_id), [tenant.tenant_id]);
+  const create = useApiAction(createAccessGrant);
+  const revoke = useApiAction(revokeAccessGrant);
 
-  if (authLoading) return <p>Loading...</p>;
-  if (!user || !accessToken) return <p>Signing in...</p>;
+  const [employeeUserId, setEmployeeUserId] = useState("");
+  const [employeeName, setEmployeeName] = useState("");
+  const [reason, setReason] = useState("");
+  const [hours, setHours] = useState(24);
+
+  const complete = employeeUserId.trim() && employeeName.trim() && reason.trim();
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!complete) return;
+    const expiresAt = new Date(Date.now() + hours * 3600 * 1000).toISOString();
+    const result = await create.run(tenant.tenant_id, employeeUserId.trim(), employeeName.trim(), reason.trim(), expiresAt);
+    if (result) {
+      setEmployeeUserId("");
+      setEmployeeName("");
+      setReason("");
+      grants.reload();
+    }
+  }
+
+  async function handleRevoke(grantId: number) {
+    const result = await revoke.run(grantId);
+    if (result) grants.reload();
+  }
 
   return (
-    <div>
-      <h1>Settings</h1>
+    <Card>
+      <CardHeader
+        title="Employee access grants"
+        description="Named, time-bound and logged. There is no standing access to a client's data."
+      />
 
-      <h2 style={{ fontSize: 16 }}>Roles and permissions</h2>
-      <table cellPadding={6} style={{ borderCollapse: "collapse", fontSize: 13, marginBottom: 24 }}>
-        <thead><tr style={{ borderBottom: "1px solid #ddd", textAlign: "left" }}><th>Role</th><th>Who</th><th>Sees</th></tr></thead>
-        <tbody>
-          {ROLES.map((r) => (
-            <tr key={r.role} style={{ borderBottom: "1px solid #f0f0f0" }}>
-              <td>{r.role}</td><td>{r.who}</td><td>{r.sees}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <CardBody className="border-b border-line">
+        <form onSubmit={submit} className="flex flex-wrap items-end gap-3">
+          <Input
+            label="User id"
+            value={employeeUserId}
+            onChange={(e) => setEmployeeUserId(e.target.value)}
+            fieldClassName="w-44"
+          />
+          <Input
+            label="Name"
+            value={employeeName}
+            onChange={(e) => setEmployeeName(e.target.value)}
+            fieldClassName="w-44"
+          />
+          <Input
+            label="Reason"
+            placeholder="Why this person needs access"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            fieldClassName="min-w-[220px] flex-1"
+          />
+          <Input
+            label="Expires in (hours)"
+            type="number"
+            min={1}
+            value={hours}
+            onChange={(e) => setHours(Number(e.target.value))}
+            fieldClassName="w-36"
+          />
+          <Button type="submit" variant="primary" disabled={!complete} busy={create.busy} busyLabel="Granting">
+            Grant access
+          </Button>
+        </form>
+        {create.error && <ErrorState title="No grant was created" message={create.error} className="mt-3" />}
+        {revoke.error && <ErrorState title="The grant was not revoked" message={revoke.error} className="mt-3" />}
+      </CardBody>
 
-      {forbidden && <p style={{ color: "#888" }}>Tenancy administration (grants, audit log, deletion) is admin-only.</p>}
+      {grants.error && (
+        <CardBody>
+          <ErrorState title="Grants could not be listed" message={grants.error} onRetry={grants.reload} />
+        </CardBody>
+      )}
 
-      {!forbidden && tenants && (
-        <div>
-          <h2 style={{ fontSize: 16 }}>Tenants</h2>
-          <select value={selected?.tenant_id || ""} onChange={(e) => setSelected(tenants.find((t) => t.tenant_id === e.target.value) || null)}
-                    style={{ marginBottom: 16 }}>
-            {tenants.map((t) => (
-              <option key={t.tenant_id} value={t.tenant_id}>
-                {t.name}{t.deleted_at ? " (deleted)" : ""}
-              </option>
-            ))}
-          </select>
+      {!grants.error && !grants.data && grants.loading && <SkeletonTable rows={3} cols={5} />}
 
-          {selected && !selected.deleted_at && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 32 }}>
-              <GrantsPanel accessToken={accessToken} tenantId={selected.tenant_id} />
-              <AuditLogPanel accessToken={accessToken} tenantId={selected.tenant_id} />
-              <OperationsPanel accessToken={accessToken} tenant={selected} />
-            </div>
+      {!grants.error && grants.data?.length === 0 && (
+        <EmptyState
+          icon="check"
+          title="Nobody has access"
+          description="No SPEQULA employee currently holds a grant on this tenant's data."
+        />
+      )}
+
+      {!grants.error && grants.data && grants.data.length > 0 && (
+        <TFrame>
+          <Table>
+            <THead>
+              <TR>
+                <TH>Employee</TH>
+                <TH>Reason</TH>
+                <TH>Granted</TH>
+                <TH>Expires</TH>
+                <TH>State</TH>
+                <TH />
+              </TR>
+            </THead>
+            <TBody>
+              {grants.data.map((grant) => (
+                <TR key={grant.grant_id}>
+                  <TD>
+                    <span className="font-medium text-ink">{grant.employee_name}</span>
+                    <span className="mt-0.5 block font-mono text-[11px] text-ink-faint">{grant.employee_user_id}</span>
+                  </TD>
+                  <TD className="max-w-xs">{grant.reason}</TD>
+                  <TD className="whitespace-nowrap">{formatDateTime(grant.granted_at)}</TD>
+                  <TD className="whitespace-nowrap">{formatDateTime(grant.expires_at)}</TD>
+                  <TD>
+                    {grant.is_active ? (
+                      <Badge tone="warning" dot>
+                        active
+                      </Badge>
+                    ) : grant.revoked_at ? (
+                      <Badge tone="neutral">revoked</Badge>
+                    ) : (
+                      <Badge tone="neutral">expired</Badge>
+                    )}
+                  </TD>
+                  <TD align="right">
+                    {grant.is_active && (
+                      <Button size="sm" variant="secondary" onClick={() => handleRevoke(grant.grant_id)} busy={revoke.busy}>
+                        Revoke
+                      </Button>
+                    )}
+                  </TD>
+                </TR>
+              ))}
+            </TBody>
+          </Table>
+        </TFrame>
+      )}
+    </Card>
+  );
+}
+
+/* --------------------------------------------------------------- audit log */
+
+function AuditLogPanel({ tenant }: { tenant: TenantSummary }) {
+  const log = useApiQuery((token) => getAuditLog(token, tenant.tenant_id), [tenant.tenant_id]);
+
+  return (
+    <Card>
+      <CardHeader
+        title="Audit log"
+        description="Every audited action on this tenant, newest first"
+        actions={
+          <Button variant="secondary" size="sm" onClick={log.reload} busy={log.loading} busyLabel="Loading">
+            Refresh
+          </Button>
+        }
+      />
+
+      {log.error && (
+        <CardBody>
+          <ErrorState title="The audit log could not be read" message={log.error} onRetry={log.reload} />
+        </CardBody>
+      )}
+
+      {!log.error && !log.data && log.loading && <SkeletonTable rows={4} cols={5} />}
+
+      {!log.error && log.data?.length === 0 && (
+        <EmptyState title="Nothing audited yet" description="Audited actions on this tenant appear here as they happen." />
+      )}
+
+      {!log.error && log.data && log.data.length > 0 && (
+        <TFrame>
+          <Table>
+            <THead>
+              <TR>
+                <TH>When</TH>
+                <TH>Actor</TH>
+                <TH>Action</TH>
+                <TH>Object</TH>
+                <TH>Detail</TH>
+              </TR>
+            </THead>
+            <TBody>
+              {log.data.map((row) => (
+                <TR key={row.audit_id}>
+                  <TD className="whitespace-nowrap">{formatDateTime(row.occurred_at)}</TD>
+                  <TD className="max-w-[200px] truncate" title={row.actor}>
+                    {row.actor}
+                    {row.role_key && <span className="mt-0.5 block text-[11px] text-ink-faint">{row.role_key}</span>}
+                  </TD>
+                  <TD className="font-medium text-ink">{row.action}</TD>
+                  <TD>
+                    {row.object_type}
+                    {row.object_ref ? ` #${row.object_ref}` : ""}
+                  </TD>
+                  <TD className="max-w-sm">
+                    {row.detail ? (
+                      <Disclosure label="Show">
+                        <CodeBlock>{JSON.stringify(row.detail, null, 2)}</CodeBlock>
+                      </Disclosure>
+                    ) : (
+                      "—"
+                    )}
+                  </TD>
+                </TR>
+              ))}
+            </TBody>
+          </Table>
+        </TFrame>
+      )}
+    </Card>
+  );
+}
+
+/* -------------------------------------------------------------- operations */
+
+function OperationsPanel({ tenant }: { tenant: TenantSummary }) {
+  const cost = useApiQuery((token) => getModelCost(token, tenant.tenant_id), [tenant.tenant_id]);
+  const rehearse = useApiAction(runRestoreRehearsal);
+  const remove = useApiAction(deleteTenant);
+
+  const [rehearsal, setRehearsal] = useState<RestoreRehearsalResult | null>(null);
+  const [confirmName, setConfirmName] = useState("");
+  const [deleteReason, setDeleteReason] = useState("");
+  const [deleted, setDeleted] = useState(false);
+
+  async function handleRehearsal() {
+    const result = await rehearse.run(tenant.tenant_id);
+    if (result) setRehearsal(result);
+  }
+
+  async function handleDelete() {
+    const result = await remove.run(tenant.tenant_id, deleteReason.trim());
+    if (result) setDeleted(true);
+  }
+
+  return (
+    <div className="grid gap-4 lg:grid-cols-2">
+      <Card>
+        <CardHeader title="Model cost" description="What the question-answering has cost on this tenant" />
+        <CardBody>
+          {cost.error && <ErrorState title="Cost could not be read" message={cost.error} onRetry={cost.reload} />}
+          {!cost.error && !cost.data && cost.loading && <Skeleton className="h-16 w-full" />}
+          {!cost.error && cost.data && (
+            <>
+              <p className="figure text-[24px] font-semibold">{exactAmount(cost.data.total_cost_inr)}</p>
+              <p className="mt-1 text-[13px] text-ink-muted">
+                {formatCount(cost.data.total_queries)} quer{cost.data.total_queries === 1 ? "y" : "ies"} logged,{" "}
+                {formatCount(cost.data.priced_queries)} with a recorded cost.
+              </p>
+              {cost.data.priced_queries === 0 && (
+                <Callout tone="neutral" className="mt-3">
+                  No model is configured yet, so nothing has a real cost attached. Questions are refused rather than
+                  answered until one is.
+                </Callout>
+              )}
+            </>
           )}
-          {selected?.deleted_at && <p style={{ color: "#888" }}>This tenant was deleted on {selected.deleted_at.slice(0, 10)}.</p>}
-        </div>
+        </CardBody>
+      </Card>
+
+      <Card>
+        <CardHeader title="Restore rehearsal" description="Proof the data is fully reconstructible" />
+        <CardBody>
+          <p className="text-[13px] leading-5 text-ink-muted">
+            Clones every table in this tenant&rsquo;s schema into a throwaway schema, verifies the row counts match,
+            then drops the clone. Nothing in the live schema is touched.
+          </p>
+          <Button variant="secondary" className="mt-3" onClick={handleRehearsal} busy={rehearse.busy} busyLabel="Running">
+            Run a rehearsal
+          </Button>
+
+          {rehearse.error && <ErrorState title="The rehearsal did not run" message={rehearse.error} className="mt-3" />}
+
+          {rehearsal && (
+            <>
+              <Callout
+                tone={rehearsal.passed ? "positive" : "blocking"}
+                title={rehearsal.passed ? "Passed" : "Failed"}
+                className="mt-3"
+              >
+                {rehearsal.tables.length} table{rehearsal.tables.length === 1 ? "" : "s"} checked from{" "}
+                {rehearsal.source_schema}.
+              </Callout>
+              <Disclosure label="Show every table" className="mt-2">
+                <TFrame className="rounded-control border border-line">
+                  <Table>
+                    <THead>
+                      <TR>
+                        <TH>Table</TH>
+                        <TH align="right">Source rows</TH>
+                        <TH align="right">Restored rows</TH>
+                        <TH align="right">Match</TH>
+                      </TR>
+                    </THead>
+                    <TBody>
+                      {rehearsal.tables.map((t) => (
+                        <TR key={t.table_name}>
+                          <TD className="font-mono text-[11.5px]">{t.table_name}</TD>
+                          <TD numeric>{formatCount(t.source_row_count)}</TD>
+                          <TD numeric>{formatCount(t.restored_row_count)}</TD>
+                          <TD align="right">
+                            {t.matches ? <Badge tone="positive">yes</Badge> : <Badge tone="blocking">no</Badge>}
+                          </TD>
+                        </TR>
+                      ))}
+                    </TBody>
+                  </Table>
+                </TFrame>
+              </Disclosure>
+            </>
+          )}
+        </CardBody>
+      </Card>
+
+      {!tenant.is_synthetic && (
+        <Card className="border-neg-line lg:col-span-2">
+          <CardHeader
+            title={<span className="text-neg">Delete this tenant</span>}
+            description="Irreversible. Drops the entire schema and purges PII-bearing records."
+          />
+          <CardBody>
+            {deleted ? (
+              <Callout tone="positive" title="Deleted">
+                {tenant.name} has been deleted.
+              </Callout>
+            ) : (
+              <>
+                <p className="max-w-2xl text-[13px] leading-5 text-ink-muted">
+                  There is no undo and no retention window. This runs only on an explicit, named request from the
+                  client — type the tenant&rsquo;s name to confirm you mean this one.
+                </p>
+                <div className="mt-3 flex max-w-2xl flex-wrap items-end gap-3">
+                  <Input
+                    label="Reason"
+                    placeholder="Who asked, and when"
+                    value={deleteReason}
+                    onChange={(e) => setDeleteReason(e.target.value)}
+                    fieldClassName="min-w-[240px] flex-1"
+                  />
+                  <Input
+                    label="Type the tenant name"
+                    placeholder={tenant.name}
+                    value={confirmName}
+                    onChange={(e) => setConfirmName(e.target.value)}
+                    fieldClassName="min-w-[220px] flex-1"
+                  />
+                  <Button
+                    variant="danger"
+                    disabled={!deleteReason.trim() || confirmName !== tenant.name}
+                    busy={remove.busy}
+                    busyLabel="Deleting"
+                    onClick={handleDelete}
+                  >
+                    Delete {tenant.name}
+                  </Button>
+                </div>
+                {remove.error && (
+                  <ErrorState title="The tenant was not deleted" message={remove.error} className="mt-3" />
+                )}
+              </>
+            )}
+          </CardBody>
+        </Card>
       )}
     </div>
   );

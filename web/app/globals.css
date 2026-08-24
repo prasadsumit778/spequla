@@ -1,0 +1,133 @@
+/* SPEQULA design tokens.
+ *
+ * The visual language follows corpus/08 section 1: the default surface is
+ * the numbers, state is always visible, and uncertainty is a badge with a
+ * reason. So: a calm neutral canvas, one serious navy for the frame and
+ * primary actions, and exactly three semantic colours -- reconciled/signed,
+ * needs-attention, and blocking. Nothing decorative competes with a figure.
+ */
+@import "tailwindcss";
+
+@theme {
+  --font-sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+  /* Surfaces */
+  --color-canvas: #f5f6f8;
+  --color-surface: #ffffff;
+  --color-surface-muted: #fafbfc;
+  --color-surface-sunken: #f0f2f5;
+  --color-line: #e4e8ee;
+  --color-line-strong: #cdd5df;
+
+  /* Ink */
+  --color-ink: #16202e;
+  --color-ink-soft: #35404f;
+  --color-ink-muted: #5f6b7a;
+  --color-ink-faint: #8b95a3;
+  --color-ink-inverse: #eef3f8;
+
+  /* Brand: the frame and primary action */
+  --color-brand-50: #eff4f9;
+  --color-brand-100: #dbe6f1;
+  --color-brand-200: #b6cce0;
+  --color-brand-300: #8aabc9;
+  --color-brand-400: #5b86ab;
+  --color-brand-500: #3a678e;
+  --color-brand-600: #2b5175;
+  --color-brand-700: #21405e;
+  --color-brand-800: #1a3149;
+  --color-brand-900: #132434;
+
+  /* Reconciled, balanced, signed */
+  --color-pos: #0f7a4d;
+  --color-pos-soft: #eaf5ef;
+  --color-pos-line: #bfdfcd;
+
+  /* Needs attention: unreconciled, blocked on a decision, warning severity */
+  --color-warn: #8a5a00;
+  --color-warn-soft: #fdf5e6;
+  --color-warn-line: #ecd9ac;
+
+  /* Blocking: does not balance, blocking exception, hard failure */
+  --color-neg: #ab2b23;
+  --color-neg-soft: #fdf1f0;
+  --color-neg-line: #f0c9c5;
+
+  /* Data ink. One series colour, taken from the reference visualisation
+     palette's blue ramp (step 550) and validated against a light surface:
+     inside the lightness band, above the chroma floor, over 3:1 contrast.
+     Deliberately not the navy used for chrome -- a chart line has to read as
+     data, not as another border. */
+  --color-viz-series: #1c5cab;
+  --color-viz-grid: #e4e8ee;
+
+  --radius-card: 0.625rem;
+  --radius-control: 0.375rem;
+
+  --shadow-card: 0 1px 2px rgb(22 32 46 / 0.05), 0 1px 1px rgb(22 32 46 / 0.03);
+  --shadow-raised: 0 4px 16px rgb(22 32 46 / 0.09), 0 1px 2px rgb(22 32 46 / 0.05);
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: var(--color-canvas);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    margin: 0;
+  }
+
+  /* Every figure in this product is read in a column against other figures.
+     Tabular numerals are not a style choice here. */
+  table,
+  .figure {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+  }
+
+  h1, h2, h3, h4 {
+    color: var(--color-ink);
+    font-weight: 600;
+    letter-spacing: -0.011em;
+  }
+
+  a {
+    color: inherit;
+  }
+
+  input, select, textarea, button {
+    font: inherit;
+    color: inherit;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-brand-500);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
+  ::selection {
+    background: var(--color-brand-100);
+  }
+}
+
+@utility label-caps {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-ink-faint);
+}
+
+@utility scroll-x {
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
