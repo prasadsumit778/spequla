@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from decimal import Decimal
 
-from src.mapping.engine import Proposal, evaluate_auto_accept, extract_coa, propose_mappings
+from src.mapping.engine import AUTO_ACCEPT_RUPEE_CEILING_INR, Proposal, evaluate_auto_accept, extract_coa, propose_mappings
 
 JUDGEMENT_CLASSES = {
     "exceptional.one_off", "opex.owner_remuneration", "opex.related_party_charges",
@@ -87,7 +87,8 @@ def _write_map_account(conn, schema: str, mapping_version_id: int, tenant_id: st
 
 
 def run_mapping_pass(conn, schema: str, tenant_id: str, entity_id: int, mapping_version_id: int,
-                       taxonomy: dict, human_approver: str, rupee_ceiling: Decimal | None = None) -> MappingRunSummary:
+                       taxonomy: dict, human_approver: str,
+                       rupee_ceiling: Decimal | None = AUTO_ACCEPT_RUPEE_CEILING_INR) -> MappingRunSummary:
     """taxonomy: canonical_class -> {"statement_section": ..., "statement_line": ...},
     i.e. config/taxonomy.yml loaded and keyed by class."""
     accounts = extract_coa(conn, schema, tenant_id, entity_id)

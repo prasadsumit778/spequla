@@ -2,7 +2,7 @@
 from datetime import date
 from decimal import Decimal
 
-from src.ingest.staging import stage_coa, stage_gl, stage_tb
+from src.ingest.staging import stage_coa, stage_gl, stage_store_master, stage_tb
 
 COA_CSV = (
     "account_code,account_name,parent_group,account_type,opening_balance,opening_dr_cr,cost_centre,is_active\n"
@@ -47,6 +47,38 @@ def test_stage_gl_basic_and_sign_convention():
     debit_line = result.valid_rows[1]
     assert credit_line["amount_base"] == Decimal("-845000")  # Cr negative, corpus/03 section 1
     assert debit_line["amount_base"] == Decimal("845000")    # Dr positive
+
+
+STORE_MASTER_CSV = (
+    "store_code,store_name,store_format,city,state,site_type,area_sqft,opening_date,closure_date,status\n"
+    "COCO-001,Malhar - Delhi COCO-001,COCO,Delhi,Delhi,mall,1200,2023-06-15,,active\n"
+)
+
+
+def test_stage_store_master_basic():
+    result = stage_store_master(STORE_MASTER_CSV.encode())
+    assert len(result.quarantined) == 0
+    row = result.valid_rows[0]
+    assert row["store_code"] == "COCO-001"
+    assert row["store_format"] == "COCO"
+    assert row["opening_date"] == date(2023, 6, 15)
+    assert row["closure_date"] is None
+    assert row["area_sqft"] == Decimal("1200")
+
+
+def test_stage_store_master_quarantines_missing_opening_date():
+    bad = ("store_code,store_name,store_format,city,state,site_type,area_sqft,opening_date,closure_date,status\n"
+           "COCO-002,Malhar - Pune COCO-002,COCO,Pune,Maharashtra,mall,900,,,active\n")
+    result = stage_store_master(bad.encode())
+    assert len(result.valid_rows) == 0
+    assert len(result.quarantined) == 1
+
+
+def test_stage_store_master_quarantines_duplicate_store_code():
+    dup = STORE_MASTER_CSV + "COCO-001,Malhar - Delhi COCO-001 dup,COCO,Delhi,Delhi,mall,1200,2023-06-15,,active\n"
+    result = stage_store_master(dup.encode())
+    assert len(result.valid_rows) == 1
+    assert len(result.quarantined) == 1
 
 
 def test_stage_gl_quarantines_both_debit_and_credit_populated():

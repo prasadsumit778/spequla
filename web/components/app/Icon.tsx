@@ -38,6 +38,13 @@ export default function Icon({ name, className = "h-[18px] w-[18px]" }: { name: 
           <path d="M3 16.5V8.5M7.67 16.5V4.5M12.33 16.5v-5M17 16.5V6.5" />
         </svg>
       );
+    case "forecast":
+      return (
+        <svg {...common}>
+          <path d="M3 15.5 8 9l3.2 2.8L17 5" />
+          <path d="M12.4 5h4.6v4.6" />
+        </svg>
+      );
     case "ask":
       return (
         <svg {...common}>

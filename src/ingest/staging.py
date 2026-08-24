@@ -22,9 +22,10 @@ from src.ingest.hashing import (
     BANK_ROW_HASH_FIELDS,
     CHANNEL_ORDER_ROW_HASH_FIELDS,
     PRODUCTION_OUTPUT_ROW_HASH_FIELDS,
+    STORE_MASTER_ROW_HASH_FIELDS,
     compute_row_hash,
 )
-from src.ingest.templates import BANK, COA, CONSUMER_SALES, GL, MFG_PRODUCTION, TB, Template
+from src.ingest.templates import BANK, COA, CONSUMER_SALES, GL, MFG_PRODUCTION, STORE_MASTER, TB, Template
 from src.ingest.xlsx import extract_template, looks_like_legacy_xls, looks_like_xlsx
 
 PLAUSIBLE_DATE_MIN = date(1990, 1, 1)
@@ -355,6 +356,57 @@ def stage_channel_order(raw_bytes: bytes, today: date | None = None) -> StagingR
             result.quarantined.append(QuarantinedRow(i, row, "duplicate order_id/line_no/content within this file"))
             continue
         seen_keys.add(dedup_key)
+        result.valid_rows.append(staged)
+
+    return result
+
+
+def stage_store_master(raw_bytes: bytes) -> StagingResult:
+    """Store Master, corpus/04 section 3.10. One row per store; store_code is
+    the source_record_id that Consumer Sales' channel_sub references for a
+    store-format order row (corpus/13 section 2). Dimension-only, no fact
+    write -- same shape as stage_coa."""
+    from src.ingest.landing import schema_hash as compute_schema_hash
+    header, rows = _read_tabular(raw_bytes, STORE_MASTER)
+    result = StagingResult(schema_hash=compute_schema_hash(header))
+    seen_codes: set[str] = set()
+
+    for i, row in enumerate(rows):
+        if not row.get("store_code"):
+            result.quarantined.append(QuarantinedRow(i, row, "no store_code"))
+            continue
+        if not row.get("store_name"):
+            result.quarantined.append(QuarantinedRow(i, row, "no store_name"))
+            continue
+        opening_date = _parse_date(row.get("opening_date"))
+        if opening_date is None:
+            result.quarantined.append(QuarantinedRow(i, row, "opening_date is missing or not YYYY-MM-DD"))
+            continue
+        closure_date = _parse_date(row.get("closure_date")) if row.get("closure_date") else None
+        area_sqft = _parse_decimal(row.get("area_sqft")) if row.get("area_sqft") else None
+        if row.get("area_sqft") and area_sqft is None:
+            result.quarantined.append(QuarantinedRow(i, row, "area_sqft is not a valid number"))
+            continue
+
+        store_code = row["store_code"].strip()
+        if store_code in seen_codes:
+            result.quarantined.append(QuarantinedRow(i, row, f"duplicate store_code {store_code!r} within this file"))
+            continue
+        seen_codes.add(store_code)
+
+        staged = {
+            "store_code": store_code, "store_name": row["store_name"],
+            "store_format": (row.get("store_format") or "").strip().upper() or None,
+            "city": row.get("city") or None, "state": row.get("state") or None,
+            "site_type": row.get("site_type") or None, "area_sqft": area_sqft,
+            "opening_date": opening_date, "closure_date": closure_date,
+            "status": (row.get("status") or "active").strip().lower(),
+        }
+        staged["row_hash"] = compute_row_hash({
+            **staged, "opening_date": opening_date.isoformat(),
+            "closure_date": closure_date.isoformat() if closure_date else "",
+            "area_sqft": str(area_sqft) if area_sqft is not None else "",
+        }, fields=STORE_MASTER_ROW_HASH_FIELDS)
         result.valid_rows.append(staged)
 
     return result

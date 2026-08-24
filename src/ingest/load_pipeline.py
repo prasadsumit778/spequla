@@ -25,11 +25,20 @@ from src.ingest.canonical import (
     write_coa_rows,
     write_gl_rows,
     write_production_output_rows,
+    write_store_master_rows,
 )
 from src.ingest.hashing import compute_row_hash
 from src.ingest.landing import content_hash as compute_content_hash
 from src.ingest.landing import land_file
-from src.ingest.staging import stage_bank, stage_channel_order, stage_coa, stage_gl, stage_mfg_production, stage_tb
+from src.ingest.staging import (
+    stage_bank,
+    stage_channel_order,
+    stage_coa,
+    stage_gl,
+    stage_mfg_production,
+    stage_store_master,
+    stage_tb,
+)
 from src.quality.trial_balance import TrialBalanceCheckResult, check_trial_balance
 
 
@@ -242,6 +251,32 @@ def load_channel_order_file(conn, schema: str, tenant_id: str, entity_id: int, f
     result.unchanged = write_result.unchanged
 
     result.periods_touched = sorted({f'{r["event_date"].year:04d}-{r["event_date"].month:02d}' for r in staged.valid_rows})
+    result.status = "succeeded"
+    _finish_load_run(conn, load_run_id, "succeeded")
+    return result
+
+
+def load_store_master_file(conn, schema: str, tenant_id: str, entity_id: int, file_name: str, raw_bytes: bytes,
+                               triggered_by: str) -> LoadResult:
+    """Store Master, corpus/04 section 3.10 / corpus/13 section 2. Populates
+    dim_location's retail attributes -- no fact table involved, same shape
+    as load_coa_file. No schema-hash load-blocking here: unlike GL/Bank/
+    Consumer Sales, a Store Master re-upload updating a handful of stores'
+    attributes in place is expected, ordinary usage, not a silent
+    corruption risk the way an unnoticed column rename on a transactional
+    file is."""
+    result = LoadResult()
+    load_run_id = _create_load_run(conn, tenant_id, entity_id, "excel_upload", triggered_by)
+    result.load_run_id = load_run_id
+
+    staged = stage_store_master(raw_bytes)
+    c_hash = compute_content_hash(raw_bytes)
+    storage_path = land_file(tenant_id, load_run_id, file_name, raw_bytes)
+    _record_source_file(conn, tenant_id, entity_id, load_run_id, file_name, "StoreMaster",
+                          c_hash, staged.schema_hash, storage_path, len(staged.valid_rows))
+
+    result.quarantined_count = len(staged.quarantined)
+    result.inserted = write_store_master_rows(conn, schema, tenant_id, entity_id, load_run_id, staged.valid_rows)
     result.status = "succeeded"
     _finish_load_run(conn, load_run_id, "succeeded")
     return result

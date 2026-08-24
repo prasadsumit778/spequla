@@ -171,8 +171,8 @@ Seven deterministic gates between a compiled query and the database. Every rejec
 | 3. Table allowlist | Only canonical tables and approved views visible to this role |
 | 4. Tenant predicate | Present and correct. Enforced by row-level security at the connection role, not by the query text |
 | 5. PII exclusion | No column outside the model-reachable views. `token_map`, `audit_log` and all app tables are not granted |
-| 6. Cost estimate | Under the configured cap |
-| 7. Row cap | Applied |
+| 6. Cost estimate | Under ₹5 per query, estimated AI model spend (D-066, resolved 2026-08-24) |
+| 7. Row cap | Applied. 10,000 rows (D-067, resolved 2026-08-24) |
 
 Execution runs on a read-only role with a statement timeout and a result cap. Every query is logged to `query_log` with the user, role, IR, SQL text, row count, duration and model version, per file 04.
 

@@ -18,7 +18,7 @@ def test_manufacturing_pnl_full_waterfall():
         "contra_revenue.sales_returns": D("20000"),
         "contra_revenue.trade_discount": D("10000"),
         "cogs.raw_material": D("500000"),
-        "cogs.direct_labour": D("100000"),
+        "opex.direct_labour": D("100000"),  # D-016 resolved 2026-08-24: opex, not COGS
         "opex.employee_cost": D("80000"),
         "opex.owner_remuneration": D("50000"),
         "da.depreciation": D("30000"),
@@ -29,9 +29,9 @@ def test_manufacturing_pnl_full_waterfall():
     r = compute_manufacturing_pnl(movements, date(2026, 4, 1), date(2026, 4, 30))
     assert r.lines["Gross revenue"] == D("1000000")
     assert r.subtotals["net_revenue"] == D("970000")   # 1,000,000 - 20,000 - 10,000
-    assert r.subtotals["cogs_total"] == D("600000")
-    assert r.subtotals["gross_profit"] == D("370000")
-    assert r.subtotals["opex_total"] == D("130000")
+    assert r.subtotals["cogs_total"] == D("500000")
+    assert r.subtotals["gross_profit"] == D("470000")
+    assert r.subtotals["opex_total"] == D("230000")
     assert r.subtotals["ebitda"] == D("240000")
     assert r.subtotals["ebit"] == D("210000")           # 240,000 - 30,000
     assert r.subtotals["pbt"] == D("200000")             # 210,000 + 5,000 - 15,000

@@ -74,6 +74,44 @@ DSO_DEFAULT_REVENUE_BASE = "net_revenue"
 DSO_DEFAULT_DAYS_BASIS = 365
 DPO_DEFAULT_COST_BASE = "cogs"
 DPO_DEFAULT_DAYS_BASIS = 365
+# dio's formula (corpus/05) is `metric.inventory / metric.cogs *
+# days_in_period` -- `days_in_period` was never substituted for anything
+# (found 2026-08-24 while fixing the gross_revenue/net_revenue/cogs chain: a
+# real gap, not a decision block -- dso and dpo already had this same
+# placeholder problem and were already given the fix below; dio's own
+# elif branch was simply never written). Same 365-day annualisation
+# convention as dso/dpo, not a new decision -- D-031 (corpus/00) resolves
+# dio's COST base and inventory buckets, not its days basis, and no corpus
+# file states a different days-basis for dio than the one already used for
+# its two sibling ratios.
+DIO_DEFAULT_DAYS_BASIS = 365
+
+
+def _trailing_twelve_months_value(conn, schema: str, tenant_id: str, entity_id: int, metric_id: str,
+                                    period_key: str, config: ConfigRegistry,
+                                    _cache: dict[tuple[str, str], "CompiledMetric"]) -> Decimal:
+    """Sum of metric_id's period_sum value over the trailing twelve calendar
+    months ending at (and including) period_key. D-028/D-030/D-031 (corpus/00)
+    resolve dso/dpo/dio's days_basis to 365 -- that convention only measures
+    real days when the revenue/cost side is an annual flow, not the single
+    compiled month. Before this, dso/dpo/dio divided a one-month
+    net_revenue/cogs figure by 365, inflating every result by roughly
+    365/30 (found 2026-08-24 running the fixed generator's baseline end to
+    end: DIO compiled at 843 days against a balance that is genuinely ~2.3
+    months of monthly COGS). Months with no resolvable value (before the
+    entity's first ingested period) contribute zero -- a rolling trailing
+    window, not a requirement that 12 full months of history exist."""
+    year, month = (int(x) for x in period_key.split("-"))
+    total = Decimal("0")
+    for i in range(12):
+        m, y = month - i, year
+        while m <= 0:
+            m += 12
+            y -= 1
+        result = _compile_metric_cached(conn, schema, tenant_id, entity_id, metric_id, f"{y:04d}-{m:02d}", config, _cache)
+        if result.status == "ok" and result.value is not None:
+            total += result.value
+    return total
 
 
 def transitive_blocking_decisions(metric_id: str, config: ConfigRegistry,
@@ -154,11 +192,42 @@ def _fetch_leaf_amounts(conn, schema: str, tenant_id: str, entity_id: int, mappi
 
 
 def compile_metric(conn, schema: str, tenant_id: str, entity_id: int, metric_id: str,
-                     period_key: str, config: ConfigRegistry) -> CompiledMetric:
+                     period_key: str, config: ConfigRegistry,
+                     _cache: dict[tuple[str, str], CompiledMetric] | None = None) -> CompiledMetric:
     """(metric_id, tenant, entity, period) -> CompiledMetric. Dimensions
     (customer/product/channel/...) are corpus/07's Ask-surface filters --
     out of this sprint's "AI: None" scope, which compiles a period's
-    entity-level total directly."""
+    entity-level total directly.
+
+    `_cache` is an optional, caller-owned memo shared across one logical
+    request (e.g. one /overview/tiles call): dso/dio/dpo each recompute up to
+    twelve months of net_revenue/cogs (_trailing_twelve_months_value, added
+    2026-08-24 alongside that fix), and dio/dpo's trailing windows overlap
+    completely -- without sharing a cache across the handful of top-level
+    compile_metric calls a single page makes, that's dozens of redundant
+    round trips to a remote Postgres for values already computed a few
+    calls earlier. Internal to this module; every recursive call site below
+    passes the same dict through instead of leaving the default and
+    starting a fresh (uncached) one."""
+    if _cache is None:
+        _cache = {}
+    return _compile_metric_cached(conn, schema, tenant_id, entity_id, metric_id, period_key, config, _cache)
+
+
+def _compile_metric_cached(conn, schema: str, tenant_id: str, entity_id: int, metric_id: str,
+                              period_key: str, config: ConfigRegistry,
+                              _cache: dict[tuple[str, str], CompiledMetric]) -> CompiledMetric:
+    cache_key = (metric_id, period_key)
+    if cache_key in _cache:
+        return _cache[cache_key]
+    result = _compile_metric_impl(conn, schema, tenant_id, entity_id, metric_id, period_key, config, _cache)
+    _cache[cache_key] = result
+    return result
+
+
+def _compile_metric_impl(conn, schema: str, tenant_id: str, entity_id: int, metric_id: str,
+                            period_key: str, config: ConfigRegistry,
+                            _cache: dict[tuple[str, str], CompiledMetric]) -> CompiledMetric:
     if metric_id not in config.metrics:
         raise KeyError(f"unknown metric_id: {metric_id!r}")
     contract = config.metrics[metric_id]
@@ -174,8 +243,22 @@ def compile_metric(conn, schema: str, tenant_id: str, entity_id: int, metric_id:
         out.blocking_decisions = blocking
         return out
 
-    global_default_params = contract.model_extra.get("contract", {}).get("parameters", {}) \
+    # corpus/05a's worked contracts declare each parameter as a small schema
+    # -- {options, default, governed_by, note} -- not the resolved value
+    # itself (config/metrics/dso.yml's revenue_base is the clearest example).
+    # resolve_parameters/overrides.py expects a flat {name: value} mapping
+    # throughout (an analyst-set override row in metric_definition already
+    # is one), so the nested schema is flattened to its .default here, at
+    # the one place it's read out of the contract -- found 2026-08-24 when
+    # dso first actually ran against real data and crashed passing the whole
+    # nested dict through as a value (and, for dso/dpo, later used as a dict
+    # key) instead of just "net_revenue"/"cogs".
+    _raw_params = contract.model_extra.get("contract", {}).get("parameters", {}) \
         if contract.model_extra else {}
+    global_default_params = {
+        name: (spec.get("default") if isinstance(spec, dict) else spec)
+        for name, spec in _raw_params.items()
+    }
     resolved = resolve_parameters(conn, schema, tenant_id, metric_id, entity_id, period_end,
                                      global_default=global_default_params)
     out.definition_source = resolved.source
@@ -220,7 +303,7 @@ def compile_metric(conn, schema: str, tenant_id: str, entity_id: int, metric_id:
         return out
 
     dep_results: dict[str, CompiledMetric] = {
-        dep_id: compile_metric(conn, schema, tenant_id, entity_id, dep_id, period_key, config)
+        dep_id: _compile_metric_cached(conn, schema, tenant_id, entity_id, dep_id, period_key, config, _cache)
         for dep_id in reg.dependencies
     }
     unusable = {k: v for k, v in dep_results.items() if v.status != "ok"}
@@ -255,12 +338,19 @@ def compile_metric(conn, schema: str, tenant_id: str, entity_id: int, metric_id:
         revenue_base = out.parameters_used.get("revenue_base", DSO_DEFAULT_REVENUE_BASE)
         days_basis = out.parameters_used.get("days_basis", DSO_DEFAULT_DAYS_BASIS)
         formula = f"metric.accounts_receivable / metric.{revenue_base} * {days_basis}"
-        values.setdefault(revenue_base, values.get("net_revenue"))
+        values[revenue_base] = _trailing_twelve_months_value(
+            conn, schema, tenant_id, entity_id, revenue_base, period_key, config, _cache)
     elif metric_id == "dpo":
         cost_base = out.parameters_used.get("cost_base", DPO_DEFAULT_COST_BASE)
         days_basis = out.parameters_used.get("days_basis", DPO_DEFAULT_DAYS_BASIS)
         formula = f"metric.accounts_payable / metric.{cost_base} * {days_basis}"
-        values.setdefault(cost_base, values.get("cogs"))
+        values[cost_base] = _trailing_twelve_months_value(
+            conn, schema, tenant_id, entity_id, cost_base, period_key, config, _cache)
+    elif metric_id == "dio":
+        days_basis = out.parameters_used.get("days_basis", DIO_DEFAULT_DAYS_BASIS)
+        formula = f"metric.inventory / metric.cogs * {days_basis}"
+        values["cogs"] = _trailing_twelve_months_value(
+            conn, schema, tenant_id, entity_id, "cogs", period_key, config, _cache)
 
     try:
         out.value = eval_metric_formula(formula, values)

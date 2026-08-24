@@ -9,7 +9,7 @@ registry:
   p0_ask: true
   p0_statement: true
   definition: Amounts due to suppliers.
-  formula: sum(fact_ap_open.outstanding_amount) or gl_class(liability.trade_payable)
+  formula: gl_class(liability.trade_payable)
   unit: INR
   source_facts:
   - fact_ap_open

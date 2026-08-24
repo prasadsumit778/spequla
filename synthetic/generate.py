@@ -23,7 +23,7 @@ DATA_ROOT = Path(__file__).resolve().parent.parent / "data" / "synthetic"
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--company", choices=["manufacturer", "consumer"], required=True)
+    p.add_argument("--company", choices=["manufacturer", "consumer", "apparel"], required=True)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--tenant-id", default=None, help="If set, lands files under this tenant's storage prefix")
     p.add_argument("--land", action="store_true", help="Upload generated files to object storage")
@@ -40,7 +40,7 @@ def main():
         print(f"Manufacturer dataset written to {out_dir} "
               f"({len(data.coa)} ledgers, {len(data.months)} months, "
               f"{len(data.defect_log.entries)} defects logged)")
-    else:
+    elif args.company == "consumer":
         from synthetic.consumer.engine import build_consumer_company
         from synthetic.consumer.write import write_all
         data = build_consumer_company(seed=args.seed)
@@ -48,6 +48,14 @@ def main():
         print(f"Consumer dataset written to {out_dir} "
               f"({len(data.coa)} ledgers, {len(data.months)} months, "
               f"{len(data.defect_log.entries)} defects logged)")
+    else:
+        from synthetic.apparel.engine import build_company as build_apparel_company
+        from synthetic.apparel.write import write_all
+        data = build_apparel_company(seed=args.seed)
+        write_all(data, out_dir)
+        print(f"Apparel dataset written to {out_dir} "
+              f"({len(data.coa)} ledgers, {len(data.months)} months, "
+              f"{len(data.stores)} stores, {len(data.defect_log.entries)} defects logged)")
 
     if args.land:
         if not args.tenant_id:

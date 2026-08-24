@@ -117,8 +117,6 @@ Gross revenue
   less  Cost of goods sold
           Raw material
           Packing material
-          Direct labour
-          Power and fuel
           Freight
           Other direct cost
           Absorption variance                    [manufacturing, if standard costing]
@@ -126,6 +124,8 @@ Gross revenue
         Gross margin %
   less  Operating expenses
           Employee cost
+          Direct labour                          [D-016, resolved 2026-08-24: opex, not COGS]
+          Power and fuel                         [D-015, resolved 2026-08-24: opex, not COGS]
           Marketing and advertising
           Selling and distribution
           Rent

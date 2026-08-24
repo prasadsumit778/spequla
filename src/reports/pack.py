@@ -141,11 +141,11 @@ def build_executive_summary(commentary: str | None) -> dict:
 # ------------------------------------------------------------------ Section 3
 
 def build_financial_summary(conn, schema: str, tenant_id: str, entity_id: int, period_key: str,
-                                config: ConfigRegistry) -> tuple[dict, list[dict]]:
+                                config: ConfigRegistry, _cache: dict | None = None) -> tuple[dict, list[dict]]:
     """corpus/08 section 7 #3. Returns (section_dict, chart_specs)."""
     tiles, charts, metric_versions = [], [], {}
     for metric_id, label in HEADLINE_METRICS:
-        comp = compute_comparatives(conn, schema, tenant_id, entity_id, metric_id, period_key, config)
+        comp = compute_comparatives(conn, schema, tenant_id, entity_id, metric_id, period_key, config, _cache)
         tiles.append({"metric": metric_id, "label": label, **_comparative_dict(comp)})
         if comp.current.status == "ok" and comp.current.metric_version is not None:
             metric_versions[metric_id] = comp.current.metric_version
@@ -220,35 +220,44 @@ def build_margin_analysis(pnl_result, prior_pnl_result) -> tuple[dict, list[dict
 # ------------------------------------------------------------------ Section 6
 
 def build_working_capital(conn, schema: str, tenant_id: str, entity_id: int, period_key: str,
-                              config: ConfigRegistry) -> tuple[dict, list[dict]]:
+                              config: ConfigRegistry, _cache: dict | None = None) -> tuple[dict, list[dict]]:
     """corpus/08 section 7 #6: DSO/DIO/DPO/CCC with trends, ageing, rupee
     impact per day. Ageing is not ingested (AR/AP ageing files land in an
     un-ingested stream, per src/quality/checks.py's own scope-boundary
     docstring). Rupee impact per day is derived from the same revenue_base/
     cost_base and days_basis compile_metric already resolved for DSO/DPO --
-    not a new convention, just that formula's own /days_basis term read back."""
+    not a new convention, just that formula's own /days_basis term read back.
+
+    `_cache` (src/semantic/compiler.py's compile_metric) matters a lot here:
+    this trend loop compiles dso/dio/dpo for several months, and each of
+    those already recomputes a trailing-twelve-months window internally
+    (added 2026-08-24) -- those windows overlap almost completely month to
+    month, so a shared cache turns what would be dozens of duplicate
+    sub-queries into one each."""
+    if _cache is None:
+        _cache = {}
     months = _trailing_months(period_key)
     charts, trends, day_impact = [], {}, {}
     for metric_id, label in WORKING_CAPITAL_METRICS:
         points = []
         for m in months:
-            result = compile_metric(conn, schema, tenant_id, entity_id, metric_id, m, config)
+            result = compile_metric(conn, schema, tenant_id, entity_id, metric_id, m, config, _cache)
             points.append((m, result.value if result.status == "ok" else None))
         trends[metric_id] = [{"period": p, "value": v} for p, v in points]
         charts.append(line_chart(f"{label} trend", label, points, unit="days"))
 
-    dso = compile_metric(conn, schema, tenant_id, entity_id, "dso", period_key, config)
+    dso = compile_metric(conn, schema, tenant_id, entity_id, "dso", period_key, config, _cache)
     if dso.status == "ok":
         days_basis = dso.parameters_used.get("days_basis", 365)
         revenue_base = dso.parameters_used.get("revenue_base", "net_revenue")
-        base = compile_metric(conn, schema, tenant_id, entity_id, revenue_base, period_key, config)
+        base = compile_metric(conn, schema, tenant_id, entity_id, revenue_base, period_key, config, _cache)
         if base.status == "ok":
             day_impact["dso"] = base.value / Decimal(days_basis)
-    dpo = compile_metric(conn, schema, tenant_id, entity_id, "dpo", period_key, config)
+    dpo = compile_metric(conn, schema, tenant_id, entity_id, "dpo", period_key, config, _cache)
     if dpo.status == "ok":
         days_basis = dpo.parameters_used.get("days_basis", 365)
         cost_base = dpo.parameters_used.get("cost_base", "cogs")
-        base = compile_metric(conn, schema, tenant_id, entity_id, cost_base, period_key, config)
+        base = compile_metric(conn, schema, tenant_id, entity_id, cost_base, period_key, config, _cache)
         if base.status == "ok":
             day_impact["dpo"] = base.value / Decimal(days_basis)
 
@@ -263,7 +272,7 @@ def build_working_capital(conn, schema: str, tenant_id: str, entity_id: int, per
 # ------------------------------------------------------------------ Section 7
 
 def build_cash_section(conn, schema: str, tenant_id: str, entity_id: int, period_key: str,
-                           config: ConfigRegistry) -> tuple[dict, list[dict]]:
+                           config: ConfigRegistry, _cache: dict | None = None) -> tuple[dict, list[dict]]:
     """corpus/08 section 7 #7: cash movement, borrowing position, facility
     utilisation. Facility utilisation (a credit limit and its drawn amount)
     has no metric, canonical class or field anywhere in the corpus -- not
@@ -272,9 +281,9 @@ def build_cash_section(conn, schema: str, tenant_id: str, entity_id: int, period
     months = _trailing_months(period_key)
     cash_points, debt_points = [], []
     for m in months:
-        cash_r = compile_metric(conn, schema, tenant_id, entity_id, "cash", m, config)
+        cash_r = compile_metric(conn, schema, tenant_id, entity_id, "cash", m, config, _cache)
         cash_points.append((m, cash_r.value if cash_r.status == "ok" else None))
-        debt_r = compile_metric(conn, schema, tenant_id, entity_id, "net_debt", m, config)
+        debt_r = compile_metric(conn, schema, tenant_id, entity_id, "net_debt", m, config, _cache)
         debt_points.append((m, debt_r.value if debt_r.status == "ok" else None))
     charts = [line_chart("Cash movement", "Cash", cash_points),
                 line_chart("Borrowing position", "Net debt", debt_points)]
@@ -360,11 +369,16 @@ def generate_pack(conn, schema: str, tenant_id: str, entity_id: int, profile: st
     cash_flow_result = assemble_cash_flow_statement(conn, schema, tenant_id, entity_id, mapping_version_id,
                                                           pnl_current.subtotals, pnl_movements, period_start, period_end)
 
-    financial_summary, kpi_charts = build_financial_summary(conn, schema, tenant_id, entity_id, period_key, config)
+    # One memo shared by every metric this pack compiles (src/semantic/
+    # compiler.py's compile_metric) -- the working-capital and financial-
+    # summary sections below both resolve dso/dio/dpo and their trailing-
+    # twelve-months windows repeatedly across overlapping months.
+    _metric_cache: dict = {}
+    financial_summary, kpi_charts = build_financial_summary(conn, schema, tenant_id, entity_id, period_key, config, _metric_cache)
     revenue_analysis = build_revenue_analysis(pnl_current, profile)
     margin_analysis, margin_charts = build_margin_analysis(pnl_current, pnl_prior_month)
-    working_capital, wc_charts = build_working_capital(conn, schema, tenant_id, entity_id, period_key, config)
-    cash_section, cash_charts = build_cash_section(conn, schema, tenant_id, entity_id, period_key, config)
+    working_capital, wc_charts = build_working_capital(conn, schema, tenant_id, entity_id, period_key, config, _metric_cache)
+    cash_section, cash_charts = build_cash_section(conn, schema, tenant_id, entity_id, period_key, config, _metric_cache)
     statements = build_statements(pnl_current, pnl_prior_month, pnl_prior_year, pnl_ytd,
                                        bs_current, bs_prior_month, bs_prior_year, cash_flow_result)
 
@@ -389,7 +403,7 @@ def generate_pack(conn, schema: str, tenant_id: str, entity_id: int, profile: st
     unmapped_value_inr = pnl_current.unmapped_value_inr
     metric_versions: dict = {}
     for metric_id, _label in HEADLINE_METRICS:
-        result = compile_metric(conn, schema, tenant_id, entity_id, metric_id, period_key, config)
+        result = compile_metric(conn, schema, tenant_id, entity_id, metric_id, period_key, config, _metric_cache)
         if result.status == "ok" and result.metric_version is not None:
             metric_versions[metric_id] = result.metric_version
 

@@ -66,9 +66,9 @@ _MANUFACTURER_RULES = [
     Rule("RM - Zinc Ingot", "cogs.raw_material"),
     Rule("Packing Material", "cogs.packing_material"),
     Rule("Stores & Consumables", "cogs.stores_consumables"),
-    Rule("Direct Labour - Plant 1", "cogs.direct_labour"),
-    Rule("Direct Labour - Plant 2", "cogs.direct_labour"),
-    Rule("Power & Fuel", "cogs.power_fuel"),
+    Rule("Direct Labour - Plant 1", "opex.direct_labour"),
+    Rule("Direct Labour - Plant 2", "opex.direct_labour"),
+    Rule("Power & Fuel", "opex.power_fuel"),
     Rule("Job Work Charges Paid", "cogs.job_work_charges"),
     Rule("Freight Inward", "cogs.freight_inward"),
     Rule("Freight Outward", "cogs.freight_outward"),
@@ -155,6 +155,10 @@ _CONSUMER_RULES = [
           "operating_cost_cm1 contract naming servicing_cost as a declared CM1 cost; see module docstring"),
     Rule("Marketplace Commission Borne", "contra_revenue.commission_marketplace",
           "D-004 resolved: commission borne is a cost above gross profit, i.e. COGS-side, not a CM1/marketing item"),
+    Rule("Marketplace Revenue Earned", "revenue.commission_marketplace",
+          "OQ-006 resolved 2026-08-24: commission/advertising/platform-fee income a marketplace operator "
+          "EARNS is revenue (D-004, D-061), distinct from contra_revenue.commission_marketplace above "
+          "(commission a seller BEARS)"),
     Rule("Marketing & Advertising", "opex.marketing_advertising"),
     Rule("Corporate Overhead", "opex.admin_general"),
     Rule("Employee Cost", "opex.employee_cost"),
@@ -169,6 +173,48 @@ _CONSUMER_RULES = [
     Rule("Share Capital", "equity.share_capital"),
     Rule("Reserves & Surplus", "equity.reserves"),
 ]
+
+# -------------------------------------------------------------------- apparel
+# synthetic/apparel/engine.py's COA_LEDGERS. opex.store_rent/store_personnel/
+# franchise_commission are the three classes added 2026-08-24 for the
+# forecasting build (corpus/06 section 3.3, corpus/13) -- distinct from the
+# generic opex.rent/opex.employee_cost used by the other two profiles,
+# because a retail store-cohort P&L is unreadable if store-level cost is
+# commingled with head-office cost in the same line.
+_APPAREL_RULES = [
+    Rule("Sales - COCO Stores", "revenue.product_sales"),
+    Rule("Sales - COFO Stores", "revenue.product_sales"),
+    Rule("Sales - FOCO Stores", "revenue.product_sales"),
+    Rule("Sales - FOFO Stores", "revenue.product_sales"),
+    Rule("Sales - Marketplace Myntra", "revenue.product_sales"),
+    Rule("Sales - Marketplace Ajio", "revenue.product_sales"),
+    Rule("Sales - Marketplace Nykaa", "revenue.product_sales"),
+    Rule("Sales - Marketplace Flipkart", "revenue.product_sales"),
+    Rule("Sales - Own Website", "revenue.product_sales"),
+    Rule("Sales Returns", "contra_revenue.sales_returns"),
+    Rule("Discount Allowed", "contra_revenue.trade_discount"),
+    Rule("COGS - Finished Goods", "cogs.raw_material",
+          "Closest existing class for 'cost of finished goods resold', same treatment as the consumer profile"),
+    Rule("Store Rent, CAM & Utilities", "opex.store_rent"),
+    Rule("Store Personnel Cost", "opex.store_personnel"),
+    Rule("Franchise Commission", "opex.franchise_commission"),
+    Rule("Marketplace Commission Borne", "contra_revenue.commission_marketplace",
+          "D-004: commission borne is a cost above gross profit, COGS-side, not CM1/marketing"),
+    Rule("Online Advertising Spend", "opex.marketing_advertising"),
+    Rule("HO Employee Cost", "opex.employee_cost"),
+    Rule("Warehouse Cost", "cogs.fulfilment", "D-020: warehousing and pick-pack"),
+    Rule("Admin Expenses", "opex.admin_general"),
+    Rule("Cash and Bank - Current A/c", "asset.cash_bank"),
+    Rule("Sundry Debtors", "asset.trade_receivable"),
+    Rule("Inventory - Finished Goods", "asset.inventory_fg"),
+    Rule("GST Input Credit", "asset.statutory_receivable"),
+    Rule("Sundry Creditors", "liability.trade_payable"),
+    Rule("GST Output Payable", "liability.statutory_payable"),
+    Rule("Marketplace Payable", "liability.trade_payable"),
+    Rule("Share Capital", "equity.share_capital"),
+    Rule("Reserves & Surplus", "equity.reserves"),
+]
+
 
 def _build_rule_index(rules: list[Rule]) -> dict[str, Rule]:
     """Both synthetic companies happen to share some generic ledger names
@@ -188,7 +234,7 @@ def _build_rule_index(rules: list[Rule]) -> dict[str, Rule]:
     return index
 
 
-ALL_RULES: dict[str, Rule] = _build_rule_index(_MANUFACTURER_RULES + _CONSUMER_RULES)
+ALL_RULES: dict[str, Rule] = _build_rule_index(_MANUFACTURER_RULES + _CONSUMER_RULES + _APPAREL_RULES)
 
 
 def match_exact_rule(source_account_name: str) -> Rule | None:

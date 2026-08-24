@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from decimal import Decimal
 
 CANONICAL_TABLE_ALLOWLIST = {
     "fact_gl_entry", "fact_bank_txn", "dim_account", "dim_date", "dim_entity",
@@ -86,36 +87,42 @@ def gate_5_pii_exclusion(sql_text: str, tables_referenced: list[str]) -> None:
             raise AdmissionRejected("pii_exclusion", f"{table!r} is not a model-reachable table")
 
 
-# Gate 6's cost cap has no declared number anywhere in the corpus -- see
-# OPEN_QUESTIONS.md OQ-003. This gate estimates cost (as an approximate row
-# count via EXPLAIN, when a live connection is available) but does not reject
-# on it: with no declared cap, "under the configured cap" cannot be evaluated
-# as true or false, and CLAUDE.md section 3.2 is explicit that an undeclared
-# threshold is left unset, not guessed. The gate is a genuine no-op until a
-# cap is declared, same posture as D-052's tolerance.
-def gate_6_cost_estimate(estimated_rows: int | None, cap: int | None) -> None:
-    if cap is not None and estimated_rows is not None and estimated_rows > cap:
-        raise AdmissionRejected("cost_estimate", f"estimated {estimated_rows} rows exceeds the configured cap {cap}")
+# D-066 (corpus/00, resolved 2026-08-24, OQ-003): gate 6's "cost estimate" is
+# the AI model spend for this question (tokens x pricing -- the same cost_inr
+# figure query_log already has columns for, corpus/12 sprint 7), not a row
+# count. Row count is gate 7's job; the two were conflated before this
+# resolution. A question is rejected outright, before it reaches the
+# database, if its estimated model spend would exceed this.
+COST_CAP_INR_PER_QUERY = Decimal("5")
 
 
-# Gate 7's row cap ALSO has no declared number (same OQ-003). Unlike gate 6,
-# this one is applied at the SQL level with a LIMIT, per corpus/07 section 7
-# ("Row cap. Applied") -- an applied cap does need *some* number to put in
-# the LIMIT clause, so this uses a generous, clearly-labelled default that
-# exists purely to prevent an unbounded result set from being returned to a
-# browser tab, not a business rule -- callers should override it once a real
-# cap is declared.
-DEFAULT_ROW_CAP_PENDING_DECLARATION = 10_000
+def gate_6_cost_estimate(estimated_cost_inr: Decimal | None, cap: Decimal | None = COST_CAP_INR_PER_QUERY) -> None:
+    """estimated_cost_inr is None until a real ModelClient reports token
+    usage -- AnthropicModelClient is still an explicitly unconfigured
+    connection point (src/semantic/model_client.py), a separate, disclosed
+    gap from this one. The cap itself (D-066) is real and declared now; this
+    gate has nothing to compare it against yet only because nothing upstream
+    produces a cost figure yet, which is a different problem than an
+    undeclared cap. None never rejects -- there's nothing to reject on."""
+    if cap is not None and estimated_cost_inr is not None and estimated_cost_inr > cap:
+        raise AdmissionRejected("cost_estimate",
+                                    f"estimated cost ₹{estimated_cost_inr} exceeds the configured cap ₹{cap}")
+
+
+# D-067 (corpus/00, resolved 2026-08-24, OQ-003): confirmed as real policy,
+# not a placeholder -- corpus/07 section 7 gate 7, "Row cap. Applied."
+ROW_CAP = 10_000
 
 
 def gate_7_row_cap(sql_text: str) -> str:
     if re.search(r"\bLIMIT\s+\d+", sql_text, re.IGNORECASE):
         return sql_text
-    return f"{sql_text.rstrip().rstrip(';')} LIMIT {DEFAULT_ROW_CAP_PENDING_DECLARATION}"
+    return f"{sql_text.rstrip().rstrip(';')} LIMIT {ROW_CAP}"
 
 
 def run_admission_gates(sql_text: str, tables_referenced: list[str], tenant_id: str,
-                           estimated_rows: int | None = None, cost_cap: int | None = None) -> AdmissionResult:
+                           estimated_cost_inr: Decimal | None = None,
+                           cost_cap: Decimal | None = COST_CAP_INR_PER_QUERY) -> AdmissionResult:
     """Runs all seven gates in order. Returns the (possibly row-capped) SQL
     text on success; raises AdmissionRejected, naming the gate, on the first
     failure -- corpus/07 section 7: 'Every rejection is logged with the
@@ -126,7 +133,7 @@ def run_admission_gates(sql_text: str, tables_referenced: list[str], tenant_id: 
         gate_3_table_allowlist(sql_text, tables_referenced)
         gate_4_tenant_predicate(sql_text, tenant_id)
         gate_5_pii_exclusion(sql_text, tables_referenced)
-        gate_6_cost_estimate(estimated_rows, cost_cap)
+        gate_6_cost_estimate(estimated_cost_inr, cost_cap)
         capped_sql = gate_7_row_cap(sql_text)
     except AdmissionRejected as e:
         return AdmissionResult(admitted=False, gate=e.gate, reason=e.reason)

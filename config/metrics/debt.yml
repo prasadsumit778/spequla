@@ -9,7 +9,7 @@ registry:
   p0_ask: true
   p0_statement: true
   definition: Interest-bearing borrowings, per the declared inclusion rule.
-  formula: gl_class(liability.debt_*)
+  formula: gl_class(liability.debt_*|liability.bill_discounting)
   unit: INR
   source_facts:
   - fact_gl_entry

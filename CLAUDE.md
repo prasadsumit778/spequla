@@ -139,6 +139,7 @@ Not in this project: vector stores, warehouses, Kafka, Airflow, Temporal, LangCh
 /src/semantic        registry loader, IR schema, validator, SQL compiler
 /src/quality         check catalogue, reconciliation, exception queue
 /src/reports         statement assembly, pack generation
+/src/forecasting     driver-based projection, apparel/retail profile (corpus 13)
 /src/api             FastAPI
 /web                 Next.js
 /synthetic           generator for the reference dataset
@@ -173,9 +174,11 @@ Not in this project: vector stores, warehouses, Kafka, Airflow, Temporal, LangCh
 
 ## 10. Out of scope
 
-Do not build, and do not scaffold "for later": Tally on-prem agent, bank or GST connectors, Account Aggregator, forecasting, scenario engine, LLM-written commentary, insight detection, alerts, document store, OCR, RAG, vector search, industry packs, AI chart selection, multi-entity consolidation, marketplace settlement reconciliation, budget versus actual, self-serve onboarding, mobile app, public API, Slack or WhatsApp delivery.
+Do not build, and do not scaffold "for later": Tally on-prem agent, bank or GST connectors, Account Aggregator, LLM-written commentary, insight detection, alerts, document store, OCR, RAG, vector search, industry packs, AI chart selection, multi-entity consolidation, marketplace settlement reconciliation, budget versus actual, self-serve onboarding, mobile app, public API, Slack or WhatsApp delivery.
 
 Each has a defined trigger in corpus `02` section 5. None starts because it would be interesting.
+
+**Forecasting and the scenario engine were started 2026-08-24, ahead of their stated trigger** ("statements tie for three consecutive months," corpus `02` section 5) -- a deliberate founder decision (D-069, corpus `00`) to build the driver-based forecast engine against a synthetic apparel/retail dataset rather than wait for a live pilot. See corpus `13` for what was built and why. The scenario DAG corpus `02` section 5 also names under the same trigger row is not built -- only single-scenario projection (corpus `13` section 6).
 
 ---
 

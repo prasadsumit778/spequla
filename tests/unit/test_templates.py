@@ -32,10 +32,17 @@ def _corpus_sheet_rows() -> dict[str, list[list[str]]]:
     """
     zf = zipfile.ZipFile(WORKBOOK)
     with zf:
-        shared = [
-            "".join(t.text or "" for t in si.iter(MAIN + "t"))
-            for si in ET.fromstring(zf.read("xl/sharedStrings.xml")).iter(MAIN + "si")
-        ]
+        # sharedStrings.xml is optional in a valid xlsx -- a workbook resaved
+        # by openpyxl (as of 3.1.x) writes every string inline instead and
+        # omits the part entirely, still perfectly readable. shared stays []
+        # in that case; text()'s t == "s" branch simply never fires.
+        if "xl/sharedStrings.xml" in zf.namelist():
+            shared = [
+                "".join(t.text or "" for t in si.iter(MAIN + "t"))
+                for si in ET.fromstring(zf.read("xl/sharedStrings.xml")).iter(MAIN + "si")
+            ]
+        else:
+            shared = []
         rels = {
             r.get("Id"): r.get("Target")
             for r in ET.fromstring(zf.read("xl/_rels/workbook.xml.rels")).iter(PKG_REL + "Relationship")
@@ -53,8 +60,14 @@ def _corpus_sheet_rows() -> dict[str, list[list[str]]]:
 
         out: dict[str, list[list[str]]] = {}
         for sheet in workbook.iter(MAIN + "sheet"):
-            target = rels[sheet.get(REL + "id")]
-            path = target if target.startswith("xl/") else "xl/" + target.lstrip("/")
+            # Target is package-relative to xl/ (e.g. "worksheets/sheet1.xml")
+            # in some xlsx writers, or an absolute in-package path (e.g.
+            # "/xl/worksheets/sheet1.xml") in others -- openpyxl 3.1.x uses
+            # the latter. Strip any leading "/" first, then only prepend
+            # "xl/" if the result doesn't already have it, so both forms
+            # resolve to the same real zip member path.
+            target = rels[sheet.get(REL + "id")].lstrip("/")
+            path = target if target.startswith("xl/") else "xl/" + target
             ws = ET.fromstring(zf.read(path))
             out[sheet.get("name")] = [
                 [text(c) for c in row.iter(MAIN + "c")] for row in ws.iter(MAIN + "row")

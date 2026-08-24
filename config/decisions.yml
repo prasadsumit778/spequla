@@ -2,8 +2,9 @@
 # Regenerate with scripts/gen_decisions_yml.py whenever the corpus changes.
 - id: D-001
   type: decision
-  status: open
-  resolution: null
+  status: resolved
+  resolution: Exclusive. Sales ledgers carry the pre-tax value; GST is a separate output-tax credit. Resolved
+    2026-08-24 for the apparel pilot, matches how its GL was already built.
   note: null
   label: Are sales ledgers booked GST-inclusive or GST-exclusive?
   governs:
@@ -12,8 +13,9 @@
   - '06'
 - id: D-002
   type: decision
-  status: open
-  resolution: null
+  status: resolved
+  resolution: Invoice date. Revenue recognised when the sale is booked, no separate dispatch/delivery
+    lag. Resolved 2026-08-24 for the apparel pilot.
   note: null
   label: Revenue recognised at invoice date, dispatch date, or delivery/acceptance?
   governs:
@@ -51,8 +53,9 @@
   - '05'
 - id: D-006
   type: decision
-  status: open
-  resolution: null
+  status: resolved
+  resolution: Sell-out. Franchise-operated (COFO/FOCO/FOFO) revenue is the end-consumer retail sale value;
+    franchise commission is a separate cost line, not a netting of revenue. Resolved 2026-08-24.
   note: null
   label: 'Franchise channel: is revenue the sell-in to the franchisee or the sell-out to the consumer?'
   governs:
@@ -110,8 +113,9 @@
   - 08
 - id: D-012
   type: decision
-  status: open
-  resolution: null
+  status: resolved
+  resolution: Expensed. Freight inward hits the P&L directly rather than being capitalised into inventory
+    value. Resolved 2026-08-24.
   note: null
   label: 'Freight inward and clearing: capitalised into inventory value, or expensed?'
   governs:
@@ -137,8 +141,9 @@
   - '05'
 - id: D-015
   type: decision
-  status: open
-  resolution: null
+  status: resolved
+  resolution: Opex, not COGS. `cogs.power_fuel` renamed `opex.power_fuel`; corpus/08 section 4.2's manufacturing
+    row order moved accordingly. Resolved 2026-08-24.
   note: null
   label: 'Power and fuel: COGS, or opex?'
   governs:
@@ -146,8 +151,9 @@
   - '05'
 - id: D-016
   type: decision
-  status: open
-  resolution: null
+  status: resolved
+  resolution: Opex, not COGS. `cogs.direct_labour` renamed `opex.direct_labour`; same corpus/08 section
+    4.2 move as D-015. Resolved 2026-08-24.
   note: null
   label: 'Direct factory labour: inside COGS, or inside the employee cost line?'
   governs:
@@ -155,8 +161,9 @@
   - '05'
 - id: D-017
   type: decision
-  status: open
-  resolution: null
+  status: resolved
+  resolution: Standard costing, absorption variance sits in COGS. Matches `cogs.absorption_variance` already
+    existing as a canonical class and the manufacturer company's own established policy. Resolved 2026-08-24.
   note: null
   label: Standard costing or actual costing? If standard, does absorption variance sit in COGS?
   governs:
@@ -165,8 +172,11 @@
   - 09
 - id: D-018
   type: decision
-  status: open
-  resolution: null
+  status: resolved
+  resolution: 'FIFO. Resolved 2026-08-24. Note: the manufacturer synthetic company''s own profile.py comment
+    states weighted average as *that* company''s book policy -- since no per-tenant override exists yet
+    (see the note above the "Still open" table), FIFO is now the enforced global default for both companies;
+    the manufacturer comment is aspirational until that override mechanism is built.'
   note: null
   label: Inventory valuation basis?
   governs:
@@ -596,6 +606,48 @@
   resolution: Included. Balance sheet, cash flow and working capital ship in the P0 pack.
   note: null
   label: Balance sheet, cash flow and working capital in the pack
+  governs: []
+- id: D-065
+  type: decision
+  status: resolved
+  resolution: 'Auto-accept rupee ceiling: flat ₹1,00,000 per period, not a percent of revenue (revenue
+    is not computable at auto-accept time, before any mapping version exists).'
+  note: null
+  label: Mapping engine auto-accept rupee ceiling (corpus/06 section 4.2)
+  governs:
+  - '06'
+- id: D-066
+  type: decision
+  status: resolved
+  resolution: 'Ask admission gate 6 cost cap: ₹5 per query, estimated AI model spend.'
+  note: null
+  label: Ask admission control gate 6, cost cap (corpus/07 section 7)
+  governs:
+  - '07'
+- id: D-067
+  type: decision
+  status: resolved
+  resolution: 'Ask admission gate 7 row cap: confirmed at 10,000, applied via LIMIT.'
+  note: null
+  label: Ask admission control gate 7, row cap (corpus/07 section 7)
+  governs:
+  - '07'
+- id: D-068
+  type: decision
+  status: resolved
+  resolution: 'Tenant data retention: request-triggered deletion only (named requester, named reason).
+    No automatic time-based purge.'
+  note: null
+  label: Tenant data retention period after a pilot ends (corpus/12 sprint 7)
+  governs:
+  - '12'
+- id: D-069
+  type: decision
+  status: resolved
+  resolution: Forecast engine started 2026-08-24, ahead of its corpus/02 section 5 trigger ("statements
+    tie for three consecutive months"), against a synthetic apparel/retail dataset. See corpus/13.
+  note: null
+  label: null
   governs: []
 - id: V-001
   type: verify

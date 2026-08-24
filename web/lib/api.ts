@@ -468,6 +468,127 @@ export async function getManufacturingOperating(accessToken: string, period: str
   return asJson(res);
 }
 
+/* --------------------------------------------------------------- forecast */
+// corpus/13. Field names mirror src/forecasting/drivers.py's Pydantic
+// models exactly -- the backend validates, the frontend just carries the
+// shape through, same "no codegen, hand-typed to match" convention as every
+// other type in this file.
+
+export type StoreFormatDrivers = {
+  store_format: "COCO" | "COFO" | "FOCO" | "FOFO";
+  stores_added_per_year: number[];
+  year1_avg_annual_sales_inr: string;
+  existing_store_price_growth_yoy: string;
+  existing_store_customer_growth_yoy: string;
+};
+
+export type OnlineChannelDrivers = {
+  channel_name: string;
+  orders_growth_yoy: string;
+  price_growth_yoy: string;
+};
+
+export type CostDrivers = {
+  store_personnel_growth_yoy: string;
+  store_rent_growth_yoy: string;
+  franchise_commission_rate: string;
+  ho_cost_growth_yoy: string;
+  online_commission_rate: string;
+  online_ad_spend_pct_of_sales: string;
+  gp_margin_path: string[];
+};
+
+export type ProductMixDrivers = {
+  target_mix: Record<string, string>;
+  convergence_years: number;
+};
+
+export type ForecastDrivers = {
+  forecast_years: number;
+  store_formats: StoreFormatDrivers[];
+  online_channels: OnlineChannelDrivers[];
+  costs: CostDrivers;
+  product_mix: ProductMixDrivers | null;
+};
+
+export type ForecastScenarioSummary = {
+  scenario_id: number;
+  name: string;
+  created_by: string;
+  created_at: string | null;
+};
+
+export type ForecastYearResult = {
+  year_index: number;
+  existing_store_revenue: string;
+  new_store_revenue: string;
+  store_revenue_by_format: Record<string, string>;
+  online_revenue_by_channel: Record<string, string>;
+  total_revenue: string;
+  category_mix: Record<string, string>;
+  gross_margin_pct: string | null;
+  cogs: string | null;
+  gross_profit: string | null;
+  store_rent: string | null;
+  store_personnel: string | null;
+  franchise_commission: string | null;
+  online_commission: string;
+  online_ad_spend: string;
+  company_overhead: string | null;
+  ebitda: string | null;
+};
+
+export type ForecastRunResult = {
+  run_id: number;
+  scenario_id: number;
+  baseline_as_of: string;
+  configured: boolean;
+  gaps: string[];
+  years: ForecastYearResult[];
+};
+
+export async function createForecastScenario(
+  accessToken: string, entityId: number, name: string, drivers: ForecastDrivers
+): Promise<{ scenario_id: number; name: string }> {
+  const res = await fetch(`${API_BASE}/forecast/scenarios`, {
+    method: "POST",
+    headers: { ...authHeaders(accessToken), "Content-Type": "application/json" },
+    body: JSON.stringify({ entity_id: entityId, name, drivers }),
+  });
+  return asJson(res);
+}
+
+export async function listForecastScenarios(accessToken: string, entityId: number): Promise<ForecastScenarioSummary[]> {
+  const params = new URLSearchParams({ entity_id: String(entityId) });
+  const res = await fetch(`${API_BASE}/forecast/scenarios?${params}`, { headers: authHeaders(accessToken) });
+  return asJson(res);
+}
+
+export async function getForecastScenario(
+  accessToken: string, scenarioId: number, entityId: number
+): Promise<{ scenario_id: number; name: string; drivers: ForecastDrivers }> {
+  const params = new URLSearchParams({ entity_id: String(entityId) });
+  const res = await fetch(`${API_BASE}/forecast/scenarios/${scenarioId}?${params}`, { headers: authHeaders(accessToken) });
+  return asJson(res);
+}
+
+export async function runForecastScenario(
+  accessToken: string, scenarioId: number, entityId: number, asOf?: string
+): Promise<ForecastRunResult> {
+  const res = await fetch(`${API_BASE}/forecast/scenarios/${scenarioId}/run`, {
+    method: "POST",
+    headers: { ...authHeaders(accessToken), "Content-Type": "application/json" },
+    body: JSON.stringify({ entity_id: entityId, as_of: asOf ?? null }),
+  });
+  return asJson(res);
+}
+
+export async function getForecastRun(accessToken: string, runId: number, entityId: number): Promise<ForecastRunResult> {
+  const params = new URLSearchParams({ entity_id: String(entityId) });
+  const res = await fetch(`${API_BASE}/forecast/runs/${runId}?${params}`, { headers: authHeaders(accessToken) });
+  return asJson(res);
+}
+
 export type TenantSummary = {
   tenant_id: string; name: string; schema_name: string; is_synthetic: boolean;
   created_at: string; deleted_at: string | null;

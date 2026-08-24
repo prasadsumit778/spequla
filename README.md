@@ -6,7 +6,7 @@ An always-on FP&A system for Indian mid-market companies. It ingests a company's
 
 ## The corpus is the only source of finance truth
 
-`/corpus` contains thirteen specification files — the authority on every financial definition, threshold, field name and business rule in this system. `CLAUDE.md` governs how this repository is built: no invented definitions, no invented thresholds, no invented source-system field names, no fabricated numbers. Where the corpus is genuinely silent or in conflict, the blocker is logged in [`OPEN_QUESTIONS.md`](./OPEN_QUESTIONS.md) rather than guessed — currently seven open items (OQ-001 through OQ-007), each a real gap or conflict in the spec, not a placeholder.
+`/corpus` contains fourteen specification files — the authority on every financial definition, threshold, field name and business rule in this system. `CLAUDE.md` governs how this repository is built: no invented definitions, no invented thresholds, no invented source-system field names, no fabricated numbers. Where the corpus is genuinely silent or in conflict, the blocker is logged in [`OPEN_QUESTIONS.md`](./OPEN_QUESTIONS.md) rather than guessed — six of the seven raised so far (OQ-001 through OQ-007) are resolved, one partially; each was a real gap or conflict in the spec, not a placeholder.
 
 | File | Authority over |
 |---|---|
@@ -23,6 +23,7 @@ An always-on FP&A system for Indian mid-market companies. It ingests a company's
 | `10_SPEQULA_GOLDEN_QUESTIONS.csv` | The evaluation set |
 | `11_SPEQULA_EVALUATION_FRAMEWORK.md` | Test suites, tolerances, gates |
 | `12_SPEQULA_ENGINEERING_BACKLOG.md` | Sprint scope and acceptance criteria |
+| `13_SPEQULA_FORECASTING_SPEC.md` | Driver taxonomy and formulas for the apparel/retail forecast engine |
 
 ## Architectural invariants
 
@@ -65,6 +66,8 @@ Since then, three P0 capabilities that were specified but not built have been cl
 
 Two things are deliberately left as connection points, not gaps: a real `AnthropicModelClient` (the vendor decision is the account owner's to make and set up), and a DB-level masking view enforcing Ask's admission gates at the role level (disclosed, not silently worked around, in `src/semantic/ask.py`).
 
+**Forecasting build (2026-08-24, corpus/13).** A driver-based operating forecast for the apparel/retail profile, started ahead of its P1 trigger by deliberate founder decision (D-069) rather than a live pilot's tied statements — see corpus/00 D-069 and corpus/02 §5. Added: `dim_location`/`dim_product` retail attributes and the Store Master ingestion template (corpus/04 §3.10); three store-level canonical classes (`opex.store_rent`, `opex.store_personnel`, `opex.franchise_commission`); a third synthetic company (`synthetic/apparel/`, five years of actuals, store-cohort and channel-tier mechanics derived from a real apparel financial model's structure, never its figures); the forecast engine itself (`src/forecasting/`) and its Forecasting screen.
+
 ## Stack
 
 Python 3.12, FastAPI, psycopg3, Pydantic v2, PostgreSQL 16 (schema-per-tenant), Next.js + TypeScript, WorkOS (AuthKit) for auth, pytest.
@@ -80,6 +83,7 @@ Python 3.12, FastAPI, psycopg3, Pydantic v2, PostgreSQL 16 (schema-per-tenant), 
 /src/semantic            registry loader, IR schema, validator, SQL compiler, Ask
 /src/quality              check catalogue, reconciliation, exception queue
 /src/reports               statement assembly, the monthly pack, the consumer ladder
+/src/forecasting            driver-based projection, apparel/retail profile (corpus/13)
 /src/admin                  tenant lifecycle, restore rehearsal
 /src/access                  employee access grants
 /src/api                      FastAPI app and routes

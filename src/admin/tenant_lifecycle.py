@@ -49,6 +49,14 @@ def delete_tenant(conn, tenant_id: str, requested_by: str, reason: str) -> Delet
     SCHEMA and DELETE across app-schema tables -- the same connection
     db/migrations/runner.py uses, not a per-request tenant-scoped one.
 
+    D-068 (corpus/00, resolved 2026-08-24, OQ-005): this is deliberately the
+    ONLY deletion path. Request-triggered only -- named requester, named
+    reason, both required by this signature -- confirmed as policy, not a
+    placeholder pending a retention-window decision. No background job
+    anywhere purges a tenant automatically after any elapsed time; if a
+    time-based policy is later declared, that's new scheduled-job code, not
+    a change to this function.
+
     Order matters and is deliberate:
       1. Look up and validate the tenant (not already deleted, exists).
       2. Write the audit_log record FIRST, while the tenant_id FK target

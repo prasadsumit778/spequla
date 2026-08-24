@@ -451,6 +451,73 @@ def resolve_product_keys_batch(conn, schema: str, tenant_id: str, entity_id: int
     return result
 
 
+def write_store_master_rows(conn, schema: str, tenant_id: str, entity_id: int, load_run_id: int,
+                                staged_rows: list[dict]) -> int:
+    """Upsert dim_location's retail attributes from an uploaded Store Master
+    file, corpus/04 section 3.10. store_code is the source_record_id --
+    write_channel_order_rows resolves a store-format order row's location_key
+    by matching channel_sub against this same source_record_id, so a Store
+    Master upload must land before (or in the same batch as) the Consumer
+    Sales rows that reference it. Same update-existing/insert-new shape as
+    write_coa_rows -- these are mutable master-data attributes, not
+    bitemporal facts, so an attribute correction updates the row in place
+    rather than closing and reinserting."""
+    if not staged_rows:
+        return 0
+
+    by_source_record_id = {row["store_code"]: row for row in staged_rows}
+
+    with conn.cursor() as cur:
+        cur.execute(
+            f'SELECT source_record_id, location_key FROM "{schema}".dim_location '
+            f'WHERE tenant_id=%s AND entity_id=%s AND is_current AND source_record_id = ANY(%s)',
+            (tenant_id, entity_id, list(by_source_record_id.keys())),
+        )
+        existing_keys = {source_record_id: location_key for source_record_id, location_key in cur.fetchall()}
+
+        to_update = [(sr, row) for sr, row in by_source_record_id.items() if sr in existing_keys]
+        to_insert = [(sr, row) for sr, row in by_source_record_id.items() if sr not in existing_keys]
+
+        for _chunk in _row_chunks(to_update, params_per_row=10):
+            values_sql = ", ".join(["(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)"] * len(_chunk))
+            params: list = []
+            for source_record_id, row in _chunk:
+                params.extend([
+                    existing_keys[source_record_id], row["store_name"], row.get("store_format"),
+                    row.get("city"), row.get("state"), row.get("site_type"), row.get("area_sqft"),
+                    row["opening_date"], row.get("closure_date"), row.get("status"),
+                ])
+            cur.execute(
+                f'UPDATE "{schema}".dim_location AS dl SET location_name = v.location_name, '
+                f'location_type = %s, store_format = v.store_format, city = v.city, state = v.state, '
+                f'site_type = v.site_type, area_sqft = v.area_sqft, opening_date = v.opening_date, '
+                f'closure_date = v.closure_date, status = v.status '
+                f'FROM (VALUES {values_sql}) AS v(location_key, location_name, store_format, city, state, '
+                f'site_type, area_sqft, opening_date, closure_date, status) '
+                f'WHERE dl.location_key = v.location_key',
+                ["store"] + params,
+            )
+
+        for _chunk in _row_chunks(to_insert, params_per_row=14):
+            values_sql = ", ".join(["(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)"] * len(_chunk))
+            params = []
+            for source_record_id, row in _chunk:
+                params.extend([
+                    tenant_id, entity_id, row["store_name"], "store", row.get("store_format"),
+                    row.get("city"), row.get("state"), row.get("site_type"), row.get("area_sqft"),
+                    row["opening_date"], row.get("closure_date"), row.get("status"),
+                    load_run_id, source_record_id,
+                ])
+            cur.execute(
+                f'INSERT INTO "{schema}".dim_location '
+                f'(tenant_id, entity_id, location_name, location_type, store_format, city, state, '
+                f' site_type, area_sqft, opening_date, closure_date, status, load_run_id, source_record_id) '
+                f'VALUES {values_sql}',
+                params,
+            )
+    return len(staged_rows)
+
+
 def resolve_location_keys_batch(conn, schema: str, tenant_id: str, entity_id: int,
                                     location_names: list[str], load_run_id: int) -> dict[str, int]:
     """Batch find-or-create for dim_location, keyed on location_name."""
@@ -485,13 +552,44 @@ def resolve_location_keys_batch(conn, schema: str, tenant_id: str, entity_id: in
     return result
 
 
+def _resolve_store_location_keys(conn, schema: str, tenant_id: str, entity_id: int,
+                                     store_codes: list[str]) -> dict[str, int]:
+    """Lookup-only (never find-or-create) for order rows on a store-format
+    channel: channel_sub is expected to match a store_code already landed by
+    a Store Master upload (write_store_master_rows). A store_code with no
+    matching dim_location row is NOT fabricated here -- location_key stays
+    NULL for that row, same as it always has for every non-store channel,
+    per corpus/04 section 3.10. This is deliberately not
+    resolve_location_keys_batch's find-or-create: that function is for
+    manufacturing's plant/line references, where the location IS the source
+    of truth for its own name; a retail store's identity and attributes come
+    from Store Master, and an order file that references an unknown store is
+    a real gap to surface, not a bare row to silently create."""
+    distinct = sorted({code for code in store_codes if code})
+    if not distinct:
+        return {}
+    with conn.cursor() as cur:
+        cur.execute(
+            f'SELECT source_record_id, location_key FROM "{schema}".dim_location '
+            f'WHERE tenant_id=%s AND entity_id=%s AND is_current AND source_record_id = ANY(%s)',
+            (tenant_id, entity_id, distinct),
+        )
+        return {source_record_id: location_key for source_record_id, location_key in cur.fetchall()}
+
+
 def write_channel_order_rows(conn, schema: str, tenant_id: str, entity_id: int, load_run_id: int,
                                  source_system: str, staged_rows: list[dict]) -> CanonicalWriteResult:
     """fact_channel_order_line, corpus/04 section 3.5. Same batched
     close-not-update discipline as write_gl_rows. customer_key is left NULL
     throughout -- dim_customer is not built (see the migration's own
     docstring), and this column is nullable in the literal DDL for exactly
-    that reason."""
+    that reason.
+
+    location_key: resolved for store-format channels (channel_type
+    owned_retail/franchise_retail per _classify_channel_type) by matching
+    channel_sub against an already-landed Store Master row (corpus/13
+    section 2, corpus/04 section 3.10) -- NULL for every other channel, same
+    as before this was wired in."""
     result = CanonicalWriteResult()
     if not staged_rows:
         return result
@@ -503,6 +601,12 @@ def write_channel_order_rows(conn, schema: str, tenant_id: str, entity_id: int, 
     )
     channel_keys = {name: resolve_channel_key(conn, schema, tenant_id, entity_id, name)
                        for name in {row["channel"] for row in staged_rows}}
+    store_channel_names = {name for name in channel_keys if _classify_channel_type(name) in
+                              ("owned_retail", "franchise_retail")}
+    store_location_keys = _resolve_store_location_keys(
+        conn, schema, tenant_id, entity_id,
+        [row["channel_sub"] for row in staged_rows if row["channel"] in store_channel_names],
+    )
 
     by_source_record_id = {f'{row["order_id"]}#{row["line_no"]}': row for row in staged_rows}
 
@@ -535,16 +639,18 @@ def write_channel_order_rows(conn, schema: str, tenant_id: str, entity_id: int, 
                 (to_close,),
             )
 
-        for _chunk in _row_chunks(to_insert, params_per_row=31):
-            values_sql = ", ".join(["(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)"] * len(_chunk))
+        for _chunk in _row_chunks(to_insert, params_per_row=32):
+            values_sql = ", ".join(["(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)"] * len(_chunk))
             params: list = []
             for source_record_id, row in _chunk:
                 period_key = f'{row["event_date"].year:04d}-{row["event_date"].month:02d}'
                 product_key = product_keys[row["item_code"] or row["item_name"]]
                 channel_key = channel_keys[row["channel"]]
+                location_key = (store_location_keys.get(row["channel_sub"])
+                                  if row["channel"] in store_channel_names else None)
                 params.extend([
                     tenant_id, entity_id, row["order_id"], row["line_no"], row["event_date"], period_key,
-                    channel_key, row["channel_sub"], product_key, row["quantity"], row["gross_amount"],
+                    channel_key, row["channel_sub"], product_key, location_key, row["quantity"], row["gross_amount"],
                     row["discount_amount"], row["net_amount"], row["shipping_charged"], row["commission_amount"],
                     row["shipping_cost"], row["payment_fee"], row["revenue_model"], row["order_type"],
                     row["commission_earned"], row["advertising_earned"], row["platform_fee_earned"],
@@ -554,7 +660,7 @@ def write_channel_order_rows(conn, schema: str, tenant_id: str, entity_id: int, 
             cur.execute(
                 f'INSERT INTO "{schema}".fact_channel_order_line '
                 f'(tenant_id, entity_id, order_id, line_no, event_date, period_key, channel_key, channel_sub, '
-                f' product_key, quantity, gross_amount, discount_amount, net_amount, shipping_charged, '
+                f' product_key, location_key, quantity, gross_amount, discount_amount, net_amount, shipping_charged, '
                 f' commission_amount, shipping_cost, payment_fee, revenue_model, order_type, commission_earned, '
                 f' advertising_earned, platform_fee_earned, is_returned, return_date, return_reason, settlement_date, '
                 f' load_run_id, source_system, source_record_id, row_hash, mapping_version_id'

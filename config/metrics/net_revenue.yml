@@ -9,7 +9,7 @@ registry:
   p0_statement: true
   definition: Revenue after all declared customer-facing deductions. The denominator for every margin
     ratio.
-  formula: metric.gross_revenue - metric.returns - metric.discounts - [declared additional deductions]
+  formula: metric.gross_revenue - metric.returns - metric.discounts
   unit: INR
   source_facts:
   - derived
@@ -48,9 +48,8 @@ registry:
   - D-005
   - D-006
   - D-007
-  unresolved_decisions:
-  - D-006
-  compiles: false
+  unresolved_decisions: []
+  compiles: true
   version: 1
   owner: SPEQULA global default
 contract:
