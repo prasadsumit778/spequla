@@ -9,7 +9,7 @@ registry:
   p0_ask: true
   p0_statement: true
   definition: Invoiced value of goods and services before any customer deduction, excluding indirect tax.
-  formula: sum(fact_invoice_line.taxable_value where not is_credit_note) + gl_class(revenue.*)
+  formula: gl_class(revenue.*)
   unit: INR
   source_facts:
   - fact_invoice_line
@@ -47,9 +47,7 @@ registry:
   - D-008
   - D-009
   - D-010
-  unresolved_decisions:
-  - D-001
-  - D-002
-  compiles: false
+  unresolved_decisions: []
+  compiles: true
   version: 1
   owner: SPEQULA global default

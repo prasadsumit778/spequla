@@ -25,14 +25,29 @@ split.
 therefore closing_cash are NOT fully computable.** See OPEN_QUESTIONS.md
 OQ-004: eight of their formula's leaf components (taxes_paid,
 asset_disposals, investment_movements, debt_drawn, debt_repaid,
-equity_raised, dividends, interest_paid) have no gl_class formula or
-canonical class anywhere in the corpus. This module computes every
-component that IS fully specified (pbt, da, interest_expense, other_income,
-working_capital_change, capex) and returns not_configured() for the rest,
-per the same disclosed-gap pattern as src/semantic/bridges.py's
+equity_raised, dividends, interest_paid) had no gl_class formula or
+canonical class anywhere in the corpus.
+
+OQ-004 resolved 2026-08-24: two of the eight ARE derivable as balance-sheet
+deltas using classes the taxonomy already has -- investment_movements from
+asset.investment, equity_raised from equity.share_capital -- computed here
+the same way capex already was (closing minus opening) and with the same
+sign convention _classify_operating_balance uses (asset increase = use of
+cash, equity/liability increase = source of cash), for consistency within
+this module. The remaining six stay undefined by explicit decision, not
+oversight: debt_drawn/debt_repaid can't be split from a single net period-end
+balance delta (a draw and a repayment in the same month collapse to one
+number), and taxes_paid/dividends/interest_paid/asset_disposals have no
+corresponding canonical class for their payable/gross-movement side at all
+(see the module-level classes below for exactly which ones and why).
+
+This module computes every component that IS fully specified (pbt, da,
+interest_expense, other_income, working_capital_change, capex,
+investment_movements, equity_raised) and returns not_configured() for the
+rest, per the same disclosed-gap pattern as src/semantic/bridges.py's
 compute_margin_bridge. Per corpus/08 section 5's hard gate ("closing_cash
 must equal balance sheet cash exactly, or neither displays"), the statement
-therefore does not reconcile and must not be presented as complete --
+therefore still does not reconcile and must not be presented as complete --
 reconciles=False on the result means exactly that, the same contract as
 BalanceSheetResult.balances.
 """
@@ -150,24 +165,49 @@ def compute_operating_cash_flow(pbt: Decimal, da: Decimal, interest_expense: Dec
     )
 
 
-def compute_investing_cash_flow(capex: Decimal) -> BridgeResult:
-    """capex is fully specified (D-037, corpus/00); asset_disposals and
-    investment_movements are not (OQ-004)."""
+def compute_investing_cash_flow(capex: Decimal, investment_movements: Decimal) -> BridgeResult:
+    """capex is fully specified (D-037, corpus/00). investment_movements is
+    now derived (OQ-004, 2026-08-24) as the cash-flow-signed delta of
+    asset.investment. asset_disposals is still undefined -- fixed_asset_gross
+    only carries a NET movement (additions less disposals), and a single net
+    delta cannot be split back into gross disposals the same way debt_drawn
+    and debt_repaid can't be recovered from debt's net delta."""
+    computed = -capex + investment_movements
     return not_configured(
-        -capex,
-        f"investing_cash_flow's asset_disposals and investment_movements components have no formula or "
-        f"canonical class anywhere in the corpus (OQ-004) -- capex alone is {capex}",
+        computed,
+        f"investing_cash_flow's asset_disposals component has no formula or canonical class anywhere in "
+        f"the corpus (OQ-004) -- capex + investment_movements alone is {computed}",
     )
 
 
-def compute_financing_cash_flow() -> BridgeResult:
-    """debt_drawn, debt_repaid, equity_raised, dividends and interest_paid
-    are all undefined (OQ-004) -- nothing in this formula is computable."""
+def compute_financing_cash_flow(equity_raised: Decimal) -> BridgeResult:
+    """equity_raised is now derived (OQ-004, 2026-08-24) as the cash-flow-
+    signed delta of equity.share_capital. debt_drawn, debt_repaid, dividends
+    and interest_paid stay undefined: debt_drawn/debt_repaid can't be split
+    from debt's single net period-end delta (a draw and a repayment in the
+    same month collapse to one number), and dividends/interest_paid have no
+    payable-side canonical class (no liability.dividend_payable or
+    liability.interest_payable exists in the taxonomy) to derive an accrual
+    adjustment from."""
     return not_configured(
-        Decimal("0"),
-        "financing_cash_flow's components (debt_drawn, debt_repaid, equity_raised, dividends, "
-        "interest_paid) have no formula or canonical class anywhere in the corpus (OQ-004)",
+        equity_raised,
+        "financing_cash_flow's debt_drawn, debt_repaid, dividends and interest_paid components have no "
+        f"formula or canonical class anywhere in the corpus (OQ-004) -- equity_raised alone is {equity_raised}",
     )
+
+
+def _bs_delta_cash_flow_signed(opening_balances: dict[str, Decimal], closing_balances: dict[str, Decimal],
+                                   canonical_class: str, is_source_side: bool) -> Decimal:
+    """(closing - opening) for canonical_class, signed the same way
+    _classify_operating_balance signs working-capital deltas: an increase is
+    a use of cash (negative) for an asset-side class, a source of cash
+    (positive) for a liability/equity-side class. is_source_side=True for
+    liability/equity classes (e.g. equity.share_capital), False for asset
+    classes (e.g. asset.investment) -- same +1/-1 convention as
+    _classify_operating_balance, kept consistent within this module rather
+    than re-derived independently for OQ-004's two new components."""
+    delta = closing_balances.get(canonical_class, Decimal("0")) - opening_balances.get(canonical_class, Decimal("0"))
+    return delta if is_source_side else -delta
 
 
 def compute_cash_flow_statement(opening_balances: dict[str, Decimal], closing_balances: dict[str, Decimal],
@@ -182,9 +222,14 @@ def compute_cash_flow_statement(opening_balances: dict[str, Decimal], closing_ba
     result.working_capital_change = wc_change
     result.working_capital_items = wc_items
 
+    investment_movements = _bs_delta_cash_flow_signed(opening_balances, closing_balances,
+                                                          "asset.investment", is_source_side=False)
+    equity_raised = _bs_delta_cash_flow_signed(opening_balances, closing_balances,
+                                                   "equity.share_capital", is_source_side=True)
+
     result.operating = compute_operating_cash_flow(pbt, da, interest_expense, other_income, wc_change)
-    result.investing = compute_investing_cash_flow(capex)
-    result.financing = compute_financing_cash_flow()
+    result.investing = compute_investing_cash_flow(capex, investment_movements)
+    result.financing = compute_financing_cash_flow(equity_raised)
 
     result.opening_cash = sum((opening_balances.get(c, Decimal("0")) for c in _CASH_CLASSES), Decimal("0"))
     result.closing_cash_from_balance_sheet = sum(

@@ -37,9 +37,13 @@ and say so rather than approximate:
     specific open decisions -- there is nothing to divide by.
 `conversion_cost_per_unit`'s formula names four components (power, direct
 labour, consumables, factory overhead); only three have a declared
-canonical class in statement_lines.py (cogs.power_fuel, cogs.direct_labour,
-cogs.stores_consumables) -- factory_overhead has none, so the entity-level
-figure is a disclosed partial sum, not silently treated as complete.
+canonical class (opex.power_fuel, opex.direct_labour, cogs.stores_consumables
+-- D-015/D-016 resolved 2026-08-24: power/fuel and direct labour are opex,
+not COGS, per corpus/00; conversion cost is an operating metric computed
+directly from canonical classes regardless of which P&L line they land on,
+so the rename doesn't change what this figure means) -- factory_overhead has
+none, so the entity-level figure is a disclosed partial sum, not silently
+treated as complete.
 """
 from __future__ import annotations
 
@@ -50,7 +54,7 @@ from decimal import Decimal
 from src.reports.query import class_movements
 
 _RM_COST_CLASSES = ["cogs.raw_material"]
-_CONVERSION_COST_CLASSES = ["cogs.power_fuel", "cogs.direct_labour", "cogs.stores_consumables"]
+_CONVERSION_COST_CLASSES = ["opex.power_fuel", "opex.direct_labour", "cogs.stores_consumables"]
 
 
 @dataclass

@@ -9,7 +9,7 @@ registry:
   p0_ask: true
   p0_statement: true
   definition: Value of stock held at the declared valuation basis.
-  formula: sum(fact_inventory_position.closing_value)
+  formula: gl_class(asset.inventory_rm|asset.inventory_wip|asset.inventory_fg|asset.inventory_packing_stores)
   unit: INR
   source_facts:
   - fact_inventory_position
@@ -36,8 +36,7 @@ registry:
   governed_by:
   - D-018
   - D-044
-  unresolved_decisions:
-  - D-018
-  compiles: false
+  unresolved_decisions: []
+  compiles: true
   version: 1
   owner: SPEQULA global default

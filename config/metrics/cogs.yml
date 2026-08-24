@@ -9,7 +9,7 @@ registry:
   p0_ask: true
   p0_statement: true
   definition: Cost of goods sold or services delivered, per the declared account class list.
-  formula: opening_inventory + purchases + direct_conversion_cost - closing_inventory, or gl_class(cogs.*)
+  formula: gl_class(cogs.*)
   unit: INR
   source_facts:
   - fact_gl_entry
@@ -51,12 +51,7 @@ registry:
   - D-018
   - D-019
   - D-020
-  unresolved_decisions:
-  - D-012
-  - D-015
-  - D-016
-  - D-017
-  - D-018
-  compiles: false
+  unresolved_decisions: []
+  compiles: true
   version: 1
   owner: SPEQULA global default

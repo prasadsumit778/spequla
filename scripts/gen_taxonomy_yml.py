@@ -75,8 +75,8 @@ def main():
     n_null_line = sum(1 for r in out if not r["statement_line"])
     print(f"Wrote {len(out)} canonical classes to {OUT} ({n_judgement} judgement classes, "
           f"{n_null_line} with no statement_line)")
-    if len(out) != 82:
-        print(f"WARNING: expected 82 classes per 06a's own footer count, got {len(out)}", file=sys.stderr)
+    if len(out) != 86:
+        print(f"WARNING: expected 86 classes per 06a's own footer count, got {len(out)}", file=sys.stderr)
         return 1
     if n_null_line:
         print(f"WARNING: {n_null_line} classes still have no statement_line", file=sys.stderr)

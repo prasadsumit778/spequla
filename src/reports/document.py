@@ -98,6 +98,18 @@ def _is_num(value) -> bool:
     return isinstance(value, (int, float, Decimal)) and not isinstance(value, bool)
 
 
+def _num_class_attr(value) -> str:
+    # A plain helper rather than an inline conditional string literal inside
+    # an f-string's {} -- nesting the same quote character (or a backslash)
+    # inside an f-string expression needs PEP 701 (Python 3.12); this stays
+    # valid on any Python 3.9+ the deployment target might actually run.
+    return ' class="num"' if _is_num(value) else ""
+
+
+def _num_class_attr_any(column: str, items: list[dict]) -> str:
+    return ' class="num"' if any(_is_num(i.get(column)) for i in items) else ""
+
+
 def _label(key: str) -> str:
     return str(key).replace("_", " ").strip().capitalize()
 
@@ -122,7 +134,7 @@ def _render_mapping(mapping: dict, depth: int = 0) -> str:
     if simple:
         rows = "".join(
             f"<dt>{escape(_label(k))}</dt>"
-            f'<dd{" class=\'num\'" if _is_num(v) else ""}>{escape(_fmt(v))}</dd>'
+            f"<dd{_num_class_attr(v)}>{escape(_fmt(v))}</dd>"
             for k, v in simple
         )
         out.append(f"<dl>{rows}</dl>")
@@ -147,13 +159,13 @@ def _render_list(items: list, depth: int = 0) -> str:
         # rendering each record on its own so no value is lost.
         if all(not isinstance(v, (dict, list)) for item in items for v in item.values()):
             head = "".join(
-                f'<th{" class=\'num\'" if any(_is_num(i.get(c)) for i in items) else ""}>'
+                f"<th{_num_class_attr_any(c, items)}>"
                 f"{escape(_label(c))}</th>"
                 for c in columns
             )
             body = "".join(
                 "<tr>" + "".join(
-                    f'<td{" class=\'num\'" if _is_num(item.get(c)) else ""}>'
+                    f"<td{_num_class_attr(item.get(c))}>"
                     f"{escape(_fmt(item.get(c)))}</td>"
                     for c in columns
                 ) + "</tr>"
@@ -267,7 +279,7 @@ def _render_chart(spec: dict) -> str:
         head = "".join(f"<th>{escape(_label(c))}</th>" for c in columns)
         body_rows = "".join(
             "<tr>" + "".join(
-                f'<td{" class=\'num\'" if _is_num(cell) else ""}>{escape(_fmt(cell))}</td>'
+                f"<td{_num_class_attr(cell)}>{escape(_fmt(cell))}</td>"
                 for cell in row
             ) + "</tr>"
             for row in rows

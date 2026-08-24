@@ -33,9 +33,9 @@ TILE_ROWS = [
 
 
 def _tile(conn, schema: str, tenant_id: str, entity_id: int, metric_id: str, period_key: str,
-            mapping_version_id: int | None, reconciliation_status: str, config) -> dict:
+            mapping_version_id: int | None, reconciliation_status: str, config, _cache: dict) -> dict:
     label = config.metrics[metric_id].registry.label
-    result = compile_metric(conn, schema, tenant_id, entity_id, metric_id, period_key, config)
+    result = compile_metric(conn, schema, tenant_id, entity_id, metric_id, period_key, config, _cache)
 
     if result.status != "ok":
         return {
@@ -73,12 +73,21 @@ def get_overview_tiles(
     lock = get_current_period_lock(conn, schema, tenant_id, entity_id, period)
     reconciliation_status = lock.status if lock else "open"
 
+    # Shared across every tile in this one request -- dso/dio/dpo's trailing-
+    # twelve-months windows (src/semantic/compiler.py's
+    # _trailing_twelve_months_value) overlap heavily with each other and
+    # with this page's own net_revenue/cash/net_debt tiles; without a shared
+    # cache each tile recomputes months already resolved a few calls
+    # earlier, adding dozens of avoidable round trips to a single page load
+    # (found 2026-08-24, the page took noticeably longer to load right after
+    # the trailing-twelve-months fix landed).
+    _cache: dict = {}
     rows = []
     for row_label, metric_ids in TILE_ROWS:
         rows.append({
             "row": row_label,
             "tiles": [_tile(conn, schema, tenant_id, entity_id, m, period, mapping_version_id,
-                              reconciliation_status, config) for m in metric_ids],
+                              reconciliation_status, config, _cache) for m in metric_ids],
         })
 
     return {

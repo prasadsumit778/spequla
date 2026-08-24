@@ -251,7 +251,17 @@ def read_sheets(raw_bytes: bytes) -> list[Sheet]:
             target = rels.get(sheet_el.get(REL_NS + "id"))
             if target is None:
                 continue
-            path = target if target.startswith("xl/") else "xl/" + target.lstrip("/")
+            # A relationship Target is package-relative to xl/ (e.g.
+            # "worksheets/sheet1.xml", the common case) or an absolute
+            # in-package path (e.g. "/xl/worksheets/sheet1.xml" -- openpyxl
+            # writes this form). Strip any leading "/" first, then only
+            # prepend "xl/" if the result doesn't already have it, so both
+            # forms resolve to the same real zip member -- getting this
+            # wrong doesn't raise, it silently skips every sheet (the
+            # KeyError below is caught), which is a much worse failure mode
+            # than a loud one.
+            target = target.lstrip("/")
+            path = target if target.startswith("xl/") else "xl/" + target
             try:
                 ws = ET.fromstring(zf.read(path))
             except KeyError:

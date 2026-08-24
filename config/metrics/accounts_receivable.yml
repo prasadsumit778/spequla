@@ -9,7 +9,7 @@ registry:
   p0_ask: true
   p0_statement: true
   definition: Amounts due from customers for goods and services delivered.
-  formula: sum(fact_ar_open.outstanding_amount) or gl_class(asset.trade_receivable)
+  formula: gl_class(asset.trade_receivable)
   unit: INR
   source_facts:
   - fact_ar_open

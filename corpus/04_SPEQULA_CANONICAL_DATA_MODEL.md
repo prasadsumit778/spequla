@@ -70,10 +70,10 @@ Every fact table declares exactly one grain and never deviates. A table whose gr
 | `dim_account` | One GL account, one version | Yes | Carries both the source name and the canonical class |
 | `dim_customer` | One customer, one version | Yes | Tokenised |
 | `dim_vendor` | One vendor, one version | Yes | Tokenised |
-| `dim_product` | One SKU or item, one version | Yes | Includes raw materials and finished goods |
+| `dim_product` | One SKU or item, one version | Yes | Includes raw materials and finished goods. Apparel profile adds price_band/occasion_type, section 3.10 |
 | `dim_channel` | One sales channel | Yes | Consumer pilots. Single default row for manufacturing |
 | `dim_cost_centre` | One cost centre | Yes | Also carries department and plant |
-| `dim_location` | One plant, warehouse or store | Yes | |
+| `dim_location` | One plant, warehouse or store | Yes | Apparel profile adds store_format/city/state/site_type/area_sqft/opening_date/closure_date/status, section 3.10 |
 | `dim_business_unit` | One business line | Yes | Optional in use, present in schema. D-063. A company running several revenue models needs it; most consumer companies segment by product and channel instead |
 
 ### Facts
@@ -478,6 +478,28 @@ CREATE INDEX ix_exception_queue ON exception (tenant_id, status, severity, value
 
 **Blocking severity means blocking.** A blocking exception prevents statement assembly and prevents the pack from generating. It is not a badge on a number that ships anyway. Warnings badge the number and let it through. The distinction is configuration per check, listed in file 09.
 
+### 3.10 dim_location and dim_product, retail attributes
+
+Added 2026-08-24 for the apparel forecasting build (corpus/13). Both dimensions previously carried only the generic columns below section 2's table inventory names — `location_name`/`location_type` and `source_item_code`/`source_item_name`/`category`/`declared_uom` respectively, enough for a plant/warehouse or a manufacturing item, not enough to run store-cohort economics or price-band/occasion product cuts for a retail chain. These are additive columns (`ALTER TABLE ... ADD COLUMN`, `db/migrations/tenant/0020` and `0021`), nullable throughout — a plant, warehouse or non-apparel product row leaves them all NULL.
+
+```sql
+-- dim_location, retail columns
+store_format   text,           -- 'COCO' | 'COFO' | 'FOCO' | 'FOFO'. Retail-store rows only
+city           text,
+state          text,
+site_type      text,           -- 'mall' | 'high_street'. Retail-store rows only
+area_sqft      numeric(10,2),
+opening_date   date,           -- store vintage -- the forecast engine's cohort key
+closure_date   date,
+status         text            -- 'active' | 'closed' | 'planned'
+
+-- dim_product, retail columns
+price_band     text,           -- bucketed MRP range, company's own banding convention (e.g. 'a.<1000' .. 'f.3001-4000+')
+occasion_type  text            -- 'casual' | 'evening' | 'occasion_fusion'. Apparel profile only
+```
+
+`store_format` is the same COCO/company-owned-company-operated, COFO/company-owned-franchise-operated, FOCO/franchise-owned-company-operated, FOFO/franchise-owned-franchise-operated taxonomy standard across Indian apparel retail — not a company-specific convention. It is orthogonal to `dim_channel.channel_type`'s existing `'owned retail'`/`'franchise retail'` split (0014_dim_channel.sql): channel identifies *which sales channel* an order line belongs to, `dim_location` identifies *which physical store*, and `store_format` on the location row is what a store-cohort forecast actually keys off — ownership and operating structure change a store's unit economics (a franchisee-operated FOFO store carries no company-borne rent or personnel cost line; the company only sees a commission), which channel type alone does not capture.
+
 ---
 
 ## 4. What the model deliberately does not have
@@ -486,7 +508,6 @@ CREATE INDEX ix_exception_queue ON exception (tenant_id, status, severity, value
 |---|---|---|
 | Consolidation and elimination tables | Multi-entity is out of P0 by your decision. `entity_id` is present on every fact so this is an addition, not a migration | P2 |
 | Document, chunk and embedding tables, pgvector | No document layer in the MVP. This removes a whole subsystem | P1 |
-| Forecast, forecast_version, scenario, assumption tables | Forecasting is P1. Designing them now would be designing against unknown requirements | P1 |
 | Budget tables | Most pilots will not have a usable budget | P1 |
 | `fact_ad_spend_day` | Marketing spend comes in as a monthly GL figure in P0 | P1 |
 | An entity resolution table | Needed for CAC and cross-channel customer identity, neither of which is in P0 | P1 |

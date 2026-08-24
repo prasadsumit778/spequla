@@ -78,43 +78,33 @@ def test_manufacturer_statements_tie_and_balance_sheet_balances(conn, tenant):
 
     bs = assemble_balance_sheet(conn, schema, tenant_id, entity_id, version_id, period_end)
 
-    # OQ-007. The trial balance sums to exactly zero (D-051), so
-    #   sum(BS classes) + sum(P&L classes) + sum(suspense) = 0.
-    # compute_balance_sheet derives retained earnings from the P&L classes and
-    # excludes suspense (corpus/06's taxonomy makes it statement_section=memo),
-    # so assets minus liabilities-and-equity is the signed suspense balance --
-    # exactly, to the rupee. Both reference companies carry a deliberately
-    # unmappable long tail (corpus/11 section 2.2 defect 10), so the sheet does
-    # not balance and, per CLAUDE.md invariant 9, is not displayed.
-    #
-    # Asserting the identity is stronger than asserting `bs.balances` would be:
-    # it proves every rupee of the gap is accounted for by unclassified value
-    # and none of it is an assembly error. Change this back to `assert
-    # bs.balances` when OQ-007 is resolved.
+    # OQ-007, resolved 2026-08-24: suspense.unmapped now gets its own balance
+    # sheet line (src/reports/statement_lines.py's BALANCE_SHEET_LINES,
+    # corpus/06a's statement_section changed memo -> bs) with the sign that
+    # makes assets == liabilities-and-equity hold whenever the trial balance
+    # itself sums to zero (D-051) -- regardless of how much sits in suspense.
+    # So:
+    #   assets - (liabilities + equity) == trial_balance_residual   (exactly)
+    # with suspense no longer appearing in the gap at all -- it's fully
+    # absorbed into the sheet's own arithmetic now, not cancelled against a
+    # second term. This reference company still does NOT balance, but for a
+    # narrower, different reason than before OQ-007: defect #4 (corpus/11
+    # section 2.2) deliberately posts one genuinely unbalanced voucher in one
+    # month, which makes trial_balance_residual itself nonzero, independent
+    # of suspense. Defect #10's 12 permanently-unmappable ledgers (the long
+    # tail) still land in suspense by design -- that's no longer what blocks
+    # the sheet, it's just visible on its own line now.
     balances = class_balances(conn, schema, tenant_id, entity_id, version_id, period_end)
     suspense_signed = balances.get("suspense.unmapped", Decimal("0"))
     trial_balance_residual = sum(balances.values(), Decimal("0"))
 
-    # OQ-007. compute_balance_sheet derives retained earnings from the P&L
-    # classes and excludes suspense (corpus/06's taxonomy makes it
-    # statement_section=memo, not bs), so the sheet's gap is fixed by
-    # arithmetic rather than by assembly:
-    #
-    #     assets - (liabilities + equity) == trial_balance_residual - suspense
-    #
-    # Both terms on the right are deliberate properties of the reference
-    # dataset (corpus/11 section 2.2): an unmappable long tail, and exactly one
-    # month whose trial balance does not balance. So the sheet does not
-    # balance, and per CLAUDE.md invariant 9 it is not displayed.
-    #
-    # Asserting this identity is stronger than asserting `bs.balances`: it
-    # proves every rupee of the gap traces to a known, quantified cause and
-    # none of it is an assembly error. Restore `assert bs.balances` once
-    # OQ-007 is resolved and the seeded defects are cleared.
     assert suspense_signed != 0, "the reference company's unmappable long tail has vanished"
+    assert trial_balance_residual != 0, "defect #4's unbalanced voucher has vanished -- if this is now " \
+        "intentional, this whole assertion block should change to assert bs.balances is True"
     assert bs.balances is False
-    assert bs.total_assets - bs.total_liabilities_and_equity == trial_balance_residual - suspense_signed, (
-        f"the balance sheet gap is not fully explained: "
+    assert bs.total_assets - bs.total_liabilities_and_equity == trial_balance_residual, (
+        f"the balance sheet gap is not fully explained by the trial balance's own residual "
+        f"(suspense should no longer contribute to it at all, post-OQ-007): "
         f"gap={bs.total_assets - bs.total_liabilities_and_equity}, "
         f"trial_balance_residual={trial_balance_residual}, suspense={suspense_signed}"
     )

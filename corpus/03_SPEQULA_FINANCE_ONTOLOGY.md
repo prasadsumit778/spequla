@@ -148,6 +148,13 @@ The MVP produces the indirect method, because it derives from the P&L and balanc
 | `capex` | CONVENTION | Investment in fixed assets | Additions to gross block, or cash paid for capital assets | INR | Month |
 | `investing_cash_flow` | STANDARD | Cash used in or generated from investing | `-metric.capex + asset_disposals + investment_movements` | INR | Month |
 | `financing_cash_flow` | STANDARD | Cash from borrowings and equity, less repayment and interest | `debt_drawn - debt_repaid + equity_raised - dividends - interest_paid` | INR | Month |
+
+**OQ-004, resolved 2026-08-24.** Of the eight formula terms above with no prior definition, two are now specified as balance-sheet deltas, using classes the taxonomy already carries:
+
+- `investment_movements` = the cash-flow-signed period delta of `asset.investment` (closing less opening; an increase is a use of cash)
+- `equity_raised` = the cash-flow-signed period delta of `equity.share_capital` (closing less opening; an increase is a source of cash)
+
+The remaining six (`taxes_paid`, `asset_disposals`, `debt_drawn`, `debt_repaid`, `dividends`, `interest_paid`) stay explicitly undefined, not by oversight: `debt_drawn`/`debt_repaid` cannot be recovered from `debt`'s single net period-end balance if both a draw and a repayment happened in the same month, and `taxes_paid`/`dividends`/`interest_paid`/`asset_disposals` have no corresponding payable-side or gross-movement canonical class (no `liability.tax_payable`, `liability.dividend_payable` or `liability.interest_payable` exists in the taxonomy, and `asset.fixed_asset_gross` carries only a net addition-less-disposal movement) to derive an accrual adjustment or gross figure from. `investing_cash_flow`, `financing_cash_flow`, `operating_cash_flow` (still missing `taxes_paid`) and therefore `closing_cash` remain not fully computable, and the cash flow statement still does not display per the mandatory check below -- see `src/reports/cashflow.py`.
 | `net_cash_movement` | STANDARD | Total change in cash for the period | `metric.operating_cash_flow + metric.investing_cash_flow + metric.financing_cash_flow` | INR | Month |
 | `closing_cash` | STANDARD | Cash at the end of the period | `opening_cash + metric.net_cash_movement` | INR | Month |
 | `free_cash_flow` | MANAGEMENT | Cash available after maintaining the asset base | `metric.operating_cash_flow - metric.capex` | INR | Month |

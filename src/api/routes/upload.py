@@ -16,6 +16,7 @@ from src.ingest.load_pipeline import (
     load_coa_file,
     load_gl_file,
     load_production_output_file,
+    load_store_master_file,
     load_tb_file,
 )
 from src.ingest.xlsx import XlsxError
@@ -23,11 +24,12 @@ from src.ingest.xlsx import XlsxError
 router = APIRouter()
 
 # The sprint 1 story's three streams, sprint 6's two profile-specific
-# operating streams (corpus/04 sections 3.5, 3.6), and Bank.
+# operating streams (corpus/04 sections 3.5, 3.6), Bank, and the apparel
+# forecasting build's Store Master (corpus/04 section 3.10, corpus/13).
 # Every template in corpus/01 that has a loader. "Bank" is here because
 # corpus/02 section 3 P0 #7 requires books-to-bank to tie, and a bank file
 # that cannot be uploaded cannot be reconciled.
-TEMPLATE_TYPES = {"COA", "TB", "GL", "Bank", "ConsumerSales", "MFGProduction"}
+TEMPLATE_TYPES = {"COA", "TB", "GL", "Bank", "ConsumerSales", "MFGProduction", "StoreMaster"}
 
 
 @router.post("/upload")
@@ -63,6 +65,8 @@ async def upload_file(
             result = load_channel_order_file(conn, schema, tenant_id, entity_id, file.filename, raw_bytes, triggered_by)
         elif template_type == "MFGProduction":
             result = load_production_output_file(conn, schema, tenant_id, entity_id, file.filename, raw_bytes, triggered_by)
+        elif template_type == "StoreMaster":
+            result = load_store_master_file(conn, schema, tenant_id, entity_id, file.filename, raw_bytes, triggered_by)
         else:
             result, _rows = load_tb_file(conn, tenant_id, entity_id, file.filename, raw_bytes, triggered_by)
     except XlsxError as e:

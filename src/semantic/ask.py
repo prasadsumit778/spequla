@@ -140,6 +140,14 @@ def ask(conn, schema: str, tenant_id: str, entity_id: int, question: str, model_
 
     admission = None
     if result.sql_text:
+        # estimated_cost_inr defaults to None here: gate 6's ₹5 cap (D-066,
+        # OPEN_QUESTIONS.md OQ-003) is real and declared, but nothing upstream
+        # produces a cost figure to check it against yet, since
+        # AnthropicModelClient (src/semantic/model_client.py) is still an
+        # explicitly unconfigured connection point -- a separate, disclosed
+        # gap. Once a real ModelClient reports token usage for the intent
+        # classification and IR generation calls already made above, pass the
+        # resulting cost_inr through here.
         admission = run_admission_gates(result.sql_text, result.tables_referenced, tenant_id)
         if not admission.admitted:
             _log(conn, tenant_id, entity_id, user_id, role, question, ir.intent, ir_dict, result.sql_text, False,

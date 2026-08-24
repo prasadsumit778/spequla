@@ -10,7 +10,7 @@ registry:
   p0_statement: true
   definition: Customer-facing deductions granted, including trade discount, cash discount and rate difference
     credit notes.
-  formula: sum(fact_invoice_line.discount_amount) + sum(credit notes where reason in ('discount','rate_difference'))
+  formula: gl_class(contra_revenue.trade_discount|contra_revenue.cash_discount|contra_revenue.rate_difference)
   unit: INR
   source_facts:
   - fact_invoice_line

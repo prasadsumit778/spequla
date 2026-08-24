@@ -51,8 +51,11 @@ def compute_balance_sheet(balances: dict[str, Decimal], as_of_date: date) -> Bal
 
     for canonical_class, raw_amount in balances.items():
         if canonical_class == "suspense.unmapped":
+            # Tracked for D-053's badge/block thresholds regardless of where
+            # it lands on the sheet -- OQ-007 puts it on the sheet now (see
+            # BALANCE_SHEET_LINES), it no longer `continue`s past the line
+            # below, but this visibility figure stays independent of that.
             result.unmapped_value_inr += abs(raw_amount)
-            continue
         if canonical_class not in BALANCE_SHEET_LINES:
             pnl_raw_total += raw_amount  # accumulate for the computed retained-earnings close
             continue
@@ -73,6 +76,7 @@ def compute_balance_sheet(balances: dict[str, Decimal], as_of_date: date) -> Bal
         result.group_totals.get("current_liabilities", Decimal("0"))
         + result.group_totals.get("non_current_liabilities", Decimal("0"))
         + result.group_totals.get("equity", Decimal("0"))
+        + result.group_totals.get("unclassified", Decimal("0"))  # OQ-007: suspense.unmapped
     )
     # Zero tolerance, same discipline as the trial balance check (D-051) --
     # corpus/08 section 5 states this as a hard gate, not a rounding-tolerant one.

@@ -61,10 +61,10 @@ def _months_in_range(start_key: str, end_key: str) -> list[str]:
 
 
 def _sum_ytd(conn, schema: str, tenant_id: str, entity_id: int, metric_id: str, period_key: str,
-               config: ConfigRegistry) -> CompiledMetric:
+               config: ConfigRegistry, _cache: dict | None = None) -> CompiledMetric:
     fy_start = fiscal_year_start(period_key)
     months = _months_in_range(fy_start, period_key)
-    parts = [compile_metric(conn, schema, tenant_id, entity_id, metric_id, m, config) for m in months]
+    parts = [compile_metric(conn, schema, tenant_id, entity_id, metric_id, m, config, _cache) for m in months]
     out = CompiledMetric(metric_id=metric_id, period_key=f"{fy_start}..{period_key}")
     unusable = [p for p in parts if p.status != "ok"]
     if unusable:
@@ -84,16 +84,23 @@ def _sum_ytd(conn, schema: str, tenant_id: str, entity_id: int, metric_id: str, 
 
 
 def compute_comparatives(conn, schema: str, tenant_id: str, entity_id: int, metric_id: str, period_key: str,
-                            config: ConfigRegistry) -> Comparatives:
-    current = compile_metric(conn, schema, tenant_id, entity_id, metric_id, period_key, config)
-    prior_month = compile_metric(conn, schema, tenant_id, entity_id, metric_id, _shift_period(period_key, -1), config)
-    prior_year = compile_metric(conn, schema, tenant_id, entity_id, metric_id, _shift_period(period_key, -12), config)
+                            config: ConfigRegistry, _cache: dict | None = None) -> Comparatives:
+    """`_cache` is an optional caller-owned memo (src/semantic/compiler.py's
+    compile_metric) -- pass the same dict across every metric a single page
+    or report computes so overlapping periods (e.g. dso/dio/dpo's trailing-
+    twelve-months window against this call's own prior-year period) are
+    resolved once, not once per caller."""
+    if _cache is None:
+        _cache = {}
+    current = compile_metric(conn, schema, tenant_id, entity_id, metric_id, period_key, config, _cache)
+    prior_month = compile_metric(conn, schema, tenant_id, entity_id, metric_id, _shift_period(period_key, -1), config, _cache)
+    prior_year = compile_metric(conn, schema, tenant_id, entity_id, metric_id, _shift_period(period_key, -12), config, _cache)
 
     ytd = ytd_prior_year = None
     aggregation = config.metrics[metric_id].registry.aggregation if metric_id in config.metrics else None
     if aggregation == "sum":
-        ytd = _sum_ytd(conn, schema, tenant_id, entity_id, metric_id, period_key, config)
-        ytd_prior_year = _sum_ytd(conn, schema, tenant_id, entity_id, metric_id, _shift_period(period_key, -12), config)
+        ytd = _sum_ytd(conn, schema, tenant_id, entity_id, metric_id, period_key, config, _cache)
+        ytd_prior_year = _sum_ytd(conn, schema, tenant_id, entity_id, metric_id, _shift_period(period_key, -12), config, _cache)
 
     return Comparatives(current=current, prior_month=prior_month, prior_year=prior_year,
                            ytd=ytd, ytd_prior_year=ytd_prior_year)

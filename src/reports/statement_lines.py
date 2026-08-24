@@ -31,8 +31,6 @@ MANUFACTURING_PNL_LINES: dict[str, tuple[str, int, int]] = {
     "contra_revenue.rate_difference": ("Discounts and rate differences", COST_SIGN, 3),
     "cogs.raw_material": ("Raw material", COST_SIGN, 10),
     "cogs.packing_material": ("Packing material", COST_SIGN, 11),
-    "cogs.direct_labour": ("Direct labour", COST_SIGN, 12),
-    "cogs.power_fuel": ("Power and fuel", COST_SIGN, 13),
     "cogs.freight_inward": ("Freight", COST_SIGN, 14),
     "cogs.freight_outward": ("Freight", COST_SIGN, 14),
     "cogs.stores_consumables": ("Other direct cost", COST_SIGN, 15),
@@ -42,6 +40,12 @@ MANUFACTURING_PNL_LINES: dict[str, tuple[str, int, int]] = {
     "cogs.fulfilment": ("Other direct cost", COST_SIGN, 15),
     "cogs.absorption_variance": ("Absorption variance", COST_SIGN, 16),
     "opex.employee_cost": ("Employee cost", COST_SIGN, 20),
+    # D-015/D-016 resolved 2026-08-24 (corpus/00): power/fuel and direct
+    # labour are opex, not COGS -- were cogs.power_fuel/cogs.direct_labour
+    # (ordinals 12/13) until this rename. corpus/08 section 4.2's row order
+    # updated to match.
+    "opex.direct_labour": ("Direct labour", COST_SIGN, 20),
+    "opex.power_fuel": ("Power and fuel", COST_SIGN, 20),
     "opex.marketing_advertising": ("Marketing and advertising", COST_SIGN, 21),
     "opex.selling_distribution": ("Selling and distribution", COST_SIGN, 22),
     "opex.rent": ("Rent", COST_SIGN, 23),
@@ -87,11 +91,13 @@ MANUFACTURING_CONDITIONAL_LINES = frozenset({"Absorption variance"})
 # per corpus/08 section 4.2's exact row sequence.
 MANUFACTURING_SECTIONS = {
     "revenue": ["Gross revenue", "Returns", "Discounts and rate differences"],
-    "cogs": ["Raw material", "Packing material", "Direct labour", "Power and fuel",
-              "Freight", "Other direct cost", "Absorption variance"],
-    "opex": ["Employee cost", "Marketing and advertising", "Selling and distribution", "Rent",
-              "Repairs and maintenance", "Professional fees", "Travel", "Administration and general",
-              "Owner remuneration", "Related party charges", "Other"],
+    "cogs": ["Raw material", "Packing material", "Freight", "Other direct cost", "Absorption variance"],
+    # Direct labour and Power and fuel moved here from "cogs" 2026-08-24
+    # (D-016/D-015 resolved: opex, not COGS) -- corpus/08 section 4.2 updated
+    # to match.
+    "opex": ["Employee cost", "Direct labour", "Power and fuel", "Marketing and advertising",
+              "Selling and distribution", "Rent", "Repairs and maintenance", "Professional fees",
+              "Travel", "Administration and general", "Owner remuneration", "Related party charges", "Other"],
     "below_ebitda": ["Depreciation and amortisation"],
     "below_ebit": ["Other income", "Finance cost"],
     "below_pbt": ["Tax"],
@@ -139,15 +145,43 @@ BALANCE_SHEET_LINES: dict[str, tuple[str, str, int]] = {
     "liability.other_current": ("current_liabilities", "Other current liabilities", REVENUE_SIGN),
     "equity.share_capital": ("equity", "Share capital", REVENUE_SIGN),
     "equity.reserves": ("equity", "Reserves and surplus", REVENUE_SIGN),
+    # OQ-007, resolved 2026-08-24: suspense.unmapped now gets its own line
+    # (statement_section changed memo -> bs in corpus/06a) instead of being
+    # excluded from both sides. sign=REVENUE_SIGN (not COST_SIGN) is
+    # deliberate, not a copy-paste of the liability convention -- it's the
+    # sign that makes assets == liabilities_and_equity hold by construction,
+    # derived from the trial balance's own zero-tolerance identity (D-051):
+    # total_assets - total_liabilities_and_equity was previously exactly the
+    # signed suspense balance (see the now-superseded assertion in
+    # tests/eval/test_statements_tie_*.py), so adding it back in with this
+    # sign is what cancels that gap to zero, regardless of whether the
+    # underlying unmapped ledgers are actually asset-like or liability-like.
+    "suspense.unmapped": ("unclassified", "Unclassified (suspense)", REVENUE_SIGN),
 }
 
 # ------------------------------------------------------------ consumer ladder
 # Which canonical classes feed which rung of corpus/08 section 4.1's ladder.
 # GMV and GST are NOT simple group-by targets -- see pnl.assemble_consumer_cm_ladder.
+#
+# revenue.commission_marketplace (OQ-006, added 2026-08-24) is deliberately NOT
+# in this list. gross_revenue here also feeds `gmv = gross_revenue + gst`
+# (pnl.compute_consumer_cm_ladder) -- folding commission/ad/platform-fee income
+# into that would inflate GMV with a service-fee revenue stream that is not
+# merchandise value, which is a new modelling question corpus/08 section 4.1
+# does not resolve (D-061 defines the metric-level `gmv` contract from
+# fact_channel_order_line columns directly, never through this GL class). The
+# ledger still ties out on the balance sheet via the P&L-residual path in
+# balance_sheet.compute_balance_sheet regardless of ladder presentation --
+# this only affects whether it's ALSO shown as its own line on the consumer
+# P&L. Escalate before wiring it in.
 CONSUMER_GROSS_REVENUE_CLASSES = ["revenue.product_sales"]
 CONSUMER_GST_CLASSES = ["liability.statutory_payable"]  # this company's only statutory-payable ledger is GST Output
 CONSUMER_DISCOUNT_CLASSES = ["contra_revenue.trade_discount"]
 CONSUMER_COGS_CLASSES = ["cogs.raw_material", "contra_revenue.commission_marketplace"]  # D-004: commission borne is COGS-side
-CONSUMER_OPERATING_COST_CM1_CLASSES = ["cogs.fulfilment", "opex.selling_distribution"]
+CONSUMER_OPERATING_COST_CM1_CLASSES = ["cogs.fulfilment", "opex.selling_distribution",
+                                          "opex.store_rent", "opex.store_personnel", "opex.franchise_commission"]
+# store_rent/store_personnel/franchise_commission added 2026-08-24, corpus/13: D-060 places offline
+# manpower/rent in the same CM1 operating-cost rung as fulfilment; franchise_commission (paid to a
+# COFO/FOFO partner) is a store-level operating cost, not COGS or marketing, treated the same way.
 CONSUMER_MARKETING_CLASSES = ["opex.marketing_advertising"]
 CONSUMER_CORPORATE_OVERHEAD_CLASSES = ["opex.admin_general", "opex.employee_cost"]

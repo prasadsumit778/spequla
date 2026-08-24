@@ -55,6 +55,11 @@ CONSUMER_SALES = Template("ConsumerSales", "Consumer Sales", (
     "payment_fee", "return_flag", "return_date", "return_reason", "settlement_date",
 ))
 
+STORE_MASTER = Template("StoreMaster", "Store Master", (
+    "store_code", "store_name", "store_format", "city", "state", "site_type",
+    "area_sqft", "opening_date", "closure_date", "status",
+))
+
 MFG_PRODUCTION = Template("MFGProduction", "MFG Production", (
     "period", "plant_or_line", "item_code", "item_name", "qty_produced",
     "qty_rejected", "uom", "input_qty", "input_uom", "available_hours",
@@ -62,7 +67,7 @@ MFG_PRODUCTION = Template("MFGProduction", "MFG Production", (
 ))
 
 ALL_TEMPLATES: tuple[Template, ...] = (
-    COA, TB, GL, BANK, CONSUMER_SALES, MFG_PRODUCTION,
+    COA, TB, GL, BANK, CONSUMER_SALES, STORE_MASTER, MFG_PRODUCTION,
 )
 
 BY_TYPE: dict[str, Template] = {t.template_type: t for t in ALL_TEMPLATES}

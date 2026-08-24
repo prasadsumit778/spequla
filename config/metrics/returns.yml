@@ -9,7 +9,7 @@ registry:
   p0_ask: true
   p0_statement: true
   definition: Value of goods returned by customers in the period.
-  formula: sum(fact_invoice_line.taxable_value where is_credit_note and credit_note_reason='return')
+  formula: gl_class(contra_revenue.sales_returns)
   unit: INR
   source_facts:
   - fact_invoice_line

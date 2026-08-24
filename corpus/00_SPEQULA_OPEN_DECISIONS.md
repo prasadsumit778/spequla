@@ -30,7 +30,7 @@ Three rules govern this file:
 
 | | Total | Resolved | Open |
 |---|---|---|---|
-| DECISION-REQUIRED | 64 | 52 | 12 |
+| DECISION-REQUIRED | 69 | 65 | 4 |
 | VERIFY | 14 | 2 | 12 |
 
 Fifty-nine is higher than the 35 to 50 I estimated. The overrun comes almost entirely from carrying two operating layers instead of one: sections G and H below are 10 decisions that would not exist if you had picked manufacturing alone.
@@ -42,6 +42,10 @@ Fifty-nine is higher than the 35 to 50 I estimated. The overrun comes almost ent
 ## 2b. RESOLVED
 
 **Resolved 20 August 2026 by Bhavya Singhal, founder.** These are now global defaults, compiled into the metric registry and overridable per company through the chain in file 05. Five decisions (D-060 to D-064) were added after reviewing a real consumer MIS; the reasoning is in section L.
+
+**D-065 to D-068 added 24 August 2026,** closing OQ-001, OQ-003 and OQ-005 (`OPEN_QUESTIONS.md`) -- gaps in the corpus that named a threshold's existence ("a declared rupee ceiling," "under the configured cap") without ever stating the number, or a policy area (tenant retention) with no decision id at all, discovered while implementing the mapping engine's auto-accept gate, Ask's admission control, and the tenant deletion path.
+
+**D-069 added the same day**, a different kind of decision from the other four: not a corpus gap discovered mid-build, but a deliberate scope decision -- start the forecast engine (`CLAUDE.md` section 10, `corpus/02` section 5) ahead of its stated trigger, against a purpose-built synthetic apparel/retail dataset rather than a live pilot's tied statements. See `corpus/13`.
 
 | ID | Resolution |
 |---|---|
@@ -71,6 +75,19 @@ Fifty-nine is higher than the 35 to 50 I estimated. The overrun comes almost ent
 | **D-062** | Never allocated. Always shown unallocated below CM2. |
 | **D-063** | Optional, not mandatory. Default consumer segmentation is product and channel. |
 | **D-064** | Included. Balance sheet, cash flow and working capital ship in the P0 pack. |
+| **D-065** | Auto-accept rupee ceiling: flat ₹1,00,000 per period, not a percent of revenue (revenue is not computable at auto-accept time, before any mapping version exists). |
+| **D-066** | Ask admission gate 6 cost cap: ₹5 per query, estimated AI model spend. |
+| **D-067** | Ask admission gate 7 row cap: confirmed at 10,000, applied via LIMIT. |
+| **D-068** | Tenant data retention: request-triggered deletion only (named requester, named reason). No automatic time-based purge. |
+| **D-069** | Forecast engine started 2026-08-24, ahead of its corpus/02 section 5 trigger ("statements tie for three consecutive months"), against a synthetic apparel/retail dataset. See corpus/13. |
+| **D-001** | Exclusive. Sales ledgers carry the pre-tax value; GST is a separate output-tax credit. Resolved 2026-08-24 for the apparel pilot, matches how its GL was already built. |
+| **D-002** | Invoice date. Revenue recognised when the sale is booked, no separate dispatch/delivery lag. Resolved 2026-08-24 for the apparel pilot. |
+| **D-006** | Sell-out. Franchise-operated (COFO/FOCO/FOFO) revenue is the end-consumer retail sale value; franchise commission is a separate cost line, not a netting of revenue. Resolved 2026-08-24. |
+| **D-012** | Expensed. Freight inward hits the P&L directly rather than being capitalised into inventory value. Resolved 2026-08-24. |
+| **D-015** | Opex, not COGS. `cogs.power_fuel` renamed `opex.power_fuel`; corpus/08 section 4.2's manufacturing row order moved accordingly. Resolved 2026-08-24. |
+| **D-016** | Opex, not COGS. `cogs.direct_labour` renamed `opex.direct_labour`; same corpus/08 section 4.2 move as D-015. Resolved 2026-08-24. |
+| **D-017** | Standard costing, absorption variance sits in COGS. Matches `cogs.absorption_variance` already existing as a canonical class and the manufacturer company's own established policy. Resolved 2026-08-24. |
+| **D-018** | FIFO. Resolved 2026-08-24. Note: the manufacturer synthetic company's own profile.py comment states weighted average as *that* company's book policy -- since no per-tenant override exists yet (see the note above the "Still open" table), FIFO is now the enforced global default for both companies; the manufacturer comment is aspirational until that override mechanism is built. |
 
 ### Second pass, 20 August 2026: suggested defaults accepted
 
@@ -107,24 +124,16 @@ Twenty-five further decisions resolved by accepting the suggested option in the 
 
 **D-020 conflicted with D-060 and was resolved against the suggestion.** The original suggestion put warehouse and fulfilment in COGS. D-060, settled from the reference MIS, puts fulfilment in operating cost above CM1. Accepting the suggestion literally would have double-counted fulfilment into COGS and emptied the CM1 rung of meaning. The ladder wins for consumer; COGS wins for manufacturing, which has no ladder.
 
-### Still open: 12
+### Still open: 4
 
 | ID | Why it stays open |
 |---|---|
-| D-001 | Are sales ledgers GST-inclusive? Read from the books |
-| D-002 | Revenue at invoice, dispatch or delivery? Depends on terms |
-| D-006 | Franchise sell-in or sell-out? Depends on what the franchisee reports |
-| D-012 | Freight inward capitalised or expensed? Read what the books do, not what policy says |
-| D-015 | Power and fuel in COGS or opex? Depends on the plant |
-| D-016 | Direct labour split out? Often the cost-centre split does not exist |
-| D-017 | Standard or actual costing? Determines whether absorption variance is visible |
-| D-018 | Inventory valuation basis? Read from the books |
 | D-041 | Declared unit of measure per product family. Nothing per-unit computes without it |
 | D-042 | Capacity basis: installed, rated or practical |
 | D-050 | Franchise inventory: consignment or sold |
 | D-052 | Books-to-bank tolerance. Set after observing two months of real residuals. Deliberately not invented |
 
-Eleven of the twelve are properties of a specific company's books. The twelfth, D-052, is a threshold that can only honestly be set from observation. None blocks the build.
+D-001, D-002, D-006, D-012, D-015, D-016, D-017 and D-018 were resolved 2026-08-24 for the apparel pilot's own books -- see section 2b. They are recorded here as **global** defaults (there is no per-tenant override mechanism built yet, despite section 1 rule 2's framing of an override as always available; `src/config/loader.py`'s `ConfigRegistry` reads one `config/decisions.yml`, not one per tenant), so the manufacturer reference company now reports under the same answers. Three of the remaining four (D-041, D-042, D-050) are properties of a specific company's books that were simply never asked. The fourth, D-052, is a threshold that can only honestly be set from observation. None blocks the build.
 
 ### Superseded: original P0-blocking list
 
@@ -284,6 +293,7 @@ This is the section where two people in the same company most often mean differe
 | **D-052** | Books-to-bank residual tolerance, as a percent of period cash movement | To be set per company after two months of observation. Do not invent one now | 09 |
 | **D-053** | Unmapped value threshold above which metrics are blocked entirely | Suggested: block above 2 percent of period value, badge between 0.5 and 2 percent, silent below 0.5 percent | 06, 09 |
 | **D-054** | What happens when a period is unreconciled: block the pack, or ship it badged? | (a) block *(suggested for the monthly pack)*; (b) badge | 07, 09 |
+| **D-065** | Mapping engine auto-accept rupee ceiling (corpus/06 section 4.2) | Resolved 2026-08-24: flat ₹1,00,000 per period. Not a percent of revenue -- revenue is a derived metric that requires a frozen mapping version to compile, which doesn't exist yet at auto-accept time; a revenue-relative ceiling would be circular | 06 |
 
 ---
 
@@ -296,6 +306,9 @@ This is the section where two people in the same company most often mean differe
 | **D-057** | Which comparisons are mandatory on every statement? | Suggested for P0: prior month and prior year. Budget only if the client has one in a usable form, which most will not | 07 |
 | **D-059** | Price, volume and mix decomposition convention. | Several standard allocations of the interaction term exist and they give different answers on the same data. Suggested: volume effect at prior-period price, price effect at current-period volume, mix as the residual, with the residual reported rather than absorbed. **P0-BLOCKING** for the variance_explain intent | 05, 07, 08, 10 |
 | **D-058** | Pseudonymisation scope: which entities get tokenised before any model call? | Suggested: employee (always, full), customer (name and contact tokenised, group and segment retained), vendor (name tokenised, category retained). Tokens are per tenant, stable, and resolved back to real names only in the render layer. The model-reachable views contain tokens only, so masking is a property of the schema and not a step anyone can forget. **P0-BLOCKING** | 04, 07 |
+| **D-066** | Ask admission control gate 6, cost cap (corpus/07 section 7) | Resolved 2026-08-24: ₹5 per query, estimated AI model spend (tokens x pricing) -- not a row count, which is gate 7's separate job. Query rejected outright, before reaching the database, if estimated spend exceeds this | 07 |
+| **D-067** | Ask admission control gate 7, row cap (corpus/07 section 7) | Resolved 2026-08-24: confirmed at 10,000 rows, applied via `LIMIT` | 07 |
+| **D-068** | Tenant data retention period after a pilot ends (corpus/12 sprint 7) | Resolved 2026-08-24: request-triggered deletion only (named requester, named reason). No background job purges anything based on elapsed time -- confirmed as the deliberate policy, matching `src/admin/tenant_lifecycle.delete_tenant()`'s existing behaviour | 12 |
 
 ---
 

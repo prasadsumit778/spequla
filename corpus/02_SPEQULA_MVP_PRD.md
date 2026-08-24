@@ -101,7 +101,7 @@ Stated again because they will be the first things an engineer under time pressu
 | Capability | Trigger to start |
 |---|---|
 | Tally on-prem agent | VERIFY[V-003] closed, and manual exports have become the bottleneck |
-| Driver forecast engine, then scenario DAG | Statements tie for three consecutive months |
+| Driver forecast engine, then scenario DAG | Statements tie for three consecutive months. **Driver forecast engine started 2026-08-24 ahead of this trigger** (D-069, `corpus/00`) -- against a synthetic apparel/retail dataset, not a live pilot's tied statements. See `corpus/13`. The scenario DAG half of this row is not built. |
 | LLM commentary drafting | You have hand-written at least three packs to establish the target voice |
 | Insight detection rules | Two months of history in the system to detect against |
 | Marketplace settlement reconciliation | A real settlement report in hand |

@@ -32,6 +32,14 @@
   statement_line: gross_revenue
   judgement_class: false
   notes: Freight and packing recovered
+- class: revenue.commission_marketplace
+  statement_section: pnl
+  statement_line: gross_revenue
+  judgement_class: false
+  notes: 'Marketplace-earned commission, advertising and platform fee income -- OQ-006 resolution, 2026-08-24.
+    GL-side counterpart to fact_channel_order_line.commission_earned/advertising_earned/platform_fee_earned;
+    distinct from contra_revenue.commission_marketplace (commission a seller BEARS under the buyout model,
+    D-004).; Decision: D-004|D-061; Profile: Consumer'
 - class: contra_revenue.sales_returns
   statement_section: pnl
   statement_line: returns
@@ -82,16 +90,18 @@
   statement_line: cogs
   judgement_class: false
   notes: 'Profile: Manufacturing'
-- class: cogs.direct_labour
+- class: opex.direct_labour
   statement_section: pnl
-  statement_line: cogs
+  statement_line: opex
   judgement_class: false
-  notes: 'Needs a cost centre split that often does not exist; Decision: D-016; Profile: Manufacturing'
-- class: cogs.power_fuel
+  notes: 'Needs a cost centre split that often does not exist. D-016 resolved 2026-08-24: opex, not COGS
+    -- moved here from cogs.direct_labour.; Decision: D-016; Profile: Manufacturing'
+- class: opex.power_fuel
   statement_section: pnl
-  statement_line: cogs
+  statement_line: opex
   judgement_class: false
-  notes: 'Decision: D-015; Profile: Manufacturing'
+  notes: 'D-015 resolved 2026-08-24: opex, not COGS -- moved here from cogs.power_fuel.; Decision: D-015;
+    Profile: Manufacturing'
 - class: cogs.job_work_charges
   statement_section: pnl
   statement_line: cogs
@@ -162,6 +172,28 @@
   statement_line: opex
   judgement_class: false
   notes: null
+- class: opex.store_rent
+  statement_section: pnl
+  statement_line: opex
+  judgement_class: false
+  notes: 'Retail store rent, CAM and HVAC -- offline manpower/rent per D-060 sits in the CM1 operating-cost
+    rung, not COGS or marketing. Added 2026-08-24 for the apparel forecasting build (corpus/13).; Decision:
+    D-060; Profile: Consumer'
+- class: opex.store_personnel
+  statement_section: pnl
+  statement_line: opex
+  judgement_class: false
+  notes: 'Retail store-level personnel cost (store staff), distinct from opex.employee_cost (head office).
+    D-060: offline manpower sits in the CM1 operating-cost rung. Added 2026-08-24, corpus/13.; Decision:
+    D-060; Profile: Consumer'
+- class: opex.franchise_commission
+  statement_section: pnl
+  statement_line: opex
+  judgement_class: false
+  notes: 'Commission paid to franchise partners operating COFO/FOFO stores -- a store-level operating
+    cost, not COGS (it is not paid to a supplier of goods) and not marketing. Treated the same as offline
+    manpower/rent per D-060''s CM1 operating-cost rung. Added 2026-08-24, corpus/13.; Decision: D-060;
+    Profile: Consumer'
 - class: opex.admin_general
   statement_section: pnl
   statement_line: opex
@@ -408,7 +440,11 @@
   judgement_class: false
   notes: null
 - class: suspense.unmapped
-  statement_section: memo
-  statement_line: suspense
+  statement_section: bs
+  statement_line: unclassified
   judgement_class: false
-  notes: 'Real class with a real balance. Never hidden; Decision: D-053'
+  notes: 'Real class with a real balance. Never hidden. OQ-007 resolution, 2026-08-24: shown as its own
+    balance sheet line (was MEMO, excluded from both sides, which made any nonzero suspense balance block
+    the sheet from ever balancing) so the sheet balances by construction and the unmapped amount stays
+    visible in rupees. D-053 still governs when metrics are blocked/badged/silenced by unmapped value.;
+    Decision: D-053'

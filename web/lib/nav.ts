@@ -23,6 +23,7 @@ export type IconName =
   | "overview"
   | "statements"
   | "operating"
+  | "forecast"
   | "ask"
   | "reports"
   | "upload"
@@ -39,6 +40,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: "/overview", label: "Overview", blurb: "The nine headline metrics for a period, each with its citation.", icon: "overview" },
       { href: "/statements", label: "Statements", blurb: "Profit and loss, and the balance sheet that has to balance.", icon: "statements" },
       { href: "/operating", label: "Operating metrics", blurb: "The consumer CM ladder, or manufacturing yield and cost per unit.", icon: "operating" },
+      { href: "/forecast", label: "Forecasting", blurb: "Driver-based revenue and cost projection, saved as named scenarios.", icon: "forecast" },
       { href: "/ask", label: "Ask", blurb: "A question, an answer, and the query that produced it.", icon: "ask" },
     ],
   },

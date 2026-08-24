@@ -47,6 +47,12 @@ PRODUCTION_OUTPUT_ROW_HASH_FIELDS = [
     "input_qty", "input_uom", "available_hours", "running_hours", "power_units",
 ]
 
+# Store Master, corpus/04 section 3.10 / corpus/01's Store Master template.
+STORE_MASTER_ROW_HASH_FIELDS = [
+    "store_code", "store_name", "store_format", "city", "state", "site_type",
+    "area_sqft", "opening_date", "closure_date", "status",
+]
+
 
 def compute_row_hash(row: dict, fields: list[str] = GL_ROW_HASH_FIELDS) -> bytes:
     """Deterministic content hash over `fields`, missing fields treated as

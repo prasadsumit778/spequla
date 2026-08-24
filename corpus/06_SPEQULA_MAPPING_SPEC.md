@@ -72,8 +72,6 @@ Naming is `section.class`, lowercase, dot-separated, stable forever. A class is 
 | `cogs.raw_material` | |
 | `cogs.packing_material` | Primary and secondary may need splitting. See D-013 |
 | `cogs.stores_consumables` | |
-| `cogs.direct_labour` | Requires a cost-centre split that often does not exist. See D-016 |
-| `cogs.power_fuel` | Manufacturing. See D-015 |
 | `cogs.job_work_charges` | Subcontracting paid out |
 | `cogs.freight_inward` | Capitalised into inventory or expensed. See D-012 |
 | `cogs.freight_outward` | The most contested line in the taxonomy. See D-011 |
@@ -84,9 +82,13 @@ Naming is `section.class`, lowercase, dot-separated, stable forever. A class is 
 
 ### 3.3 Operating expense
 
-`opex.employee_cost`, `opex.rent`, `opex.repairs_maintenance`, `opex.travel`, `opex.professional_fees`, `opex.marketing_advertising`, `opex.selling_distribution`, `opex.admin_general`, `opex.insurance`, `opex.rates_taxes`, `opex.provision_baddebt`, `opex.csr_donation`, `opex.owner_remuneration`, `opex.related_party_charges`, `opex.other`.
+`opex.employee_cost`, `opex.rent`, `opex.repairs_maintenance`, `opex.travel`, `opex.professional_fees`, `opex.marketing_advertising`, `opex.selling_distribution`, `opex.admin_general`, `opex.insurance`, `opex.rates_taxes`, `opex.provision_baddebt`, `opex.csr_donation`, `opex.owner_remuneration`, `opex.related_party_charges`, `opex.other`, `opex.store_rent`, `opex.store_personnel`, `opex.franchise_commission`, `opex.direct_labour`, `opex.power_fuel`.
+
+The last two moved here from cogs.* on 2026-08-24: D-016 (direct labour) and D-015 (power and fuel) resolved to opex, not COGS. `opex.direct_labour` still requires a cost-centre split that often does not exist. `opex.power_fuel` is manufacturing-specific.
 
 Two of these exist purely so that add-backs are computable without a manual hunt: `opex.owner_remuneration` and `opex.related_party_charges`. See D-021 and D-022. Every other tool makes you find these by reading ledger names each quarter.
+
+The last three — `opex.store_rent`, `opex.store_personnel`, `opex.franchise_commission` — are retail-store-level classes added 2026-08-24 for the apparel forecasting build (corpus/13). They exist because `opex.rent`/`opex.employee_cost` are generic, entity-wide buckets, and a retail chain's store-level P&L (existing-store like-for-like plus new-store cohorts) is unreadable if store rent and store personnel are commingled with head-office rent and head-office headcount in the same line. `opex.franchise_commission` (revenue share paid to a COFO/FOFO franchise partner) is a store-level operating cost, not COGS (it isn't paid to a supplier of goods) and not marketing — per D-060, it sits in the CM1 operating-cost rung alongside `cogs.fulfilment` and offline manpower/rent, the same treatment corpus/08's consumer CM ladder already gives servicing and fulfilment.
 
 ### 3.4 Below EBITDA
 
@@ -163,7 +165,7 @@ It returns strict JSON validated against a schema. An invalid response is retrie
 Auto-accept requires **all** of:
 
 - an exact match against a rule in the rule library, not a model proposal;
-- the account's period value below a declared rupee ceiling;
+- the account's period value below a declared rupee ceiling (D-065: flat ₹1,00,000 per period, resolved 2026-08-24 -- not a percent of revenue, since revenue is not computable at auto-accept time, before any mapping version exists to derive it from);
 - no conflicting mapping in a prior approved version;
 - the target class not being one of the judgement classes: `exceptional.one_off`, `opex.owner_remuneration`, `opex.related_party_charges`, `cogs.absorption_variance`, `liability.bill_discounting`, `liability.debt_related_party`.
 

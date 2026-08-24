@@ -21,6 +21,13 @@ from decimal import Decimal
 
 from src.mapping.rules import Rule, extract_channel_geo, match_exact_rule
 
+# D-065 (corpus/00, resolved 2026-08-24, OQ-001): flat ceiling, not a
+# percent of revenue -- revenue isn't computable at auto-accept time (no
+# mapping version exists yet to compile it from), so a revenue-relative
+# ceiling would be circular. An account whose period value is at or above
+# this must go to human review even on an exact rule match.
+AUTO_ACCEPT_RUPEE_CEILING_INR = Decimal("100000")
+
 
 @dataclass
 class AccountToMap:
@@ -92,15 +99,13 @@ def evaluate_auto_accept(
     proposal: Proposal,
     judgement_classes: set[str],
     prior_approved_class: str | None,
-    rupee_ceiling: Decimal | None,
+    rupee_ceiling: Decimal | None = AUTO_ACCEPT_RUPEE_CEILING_INR,
 ) -> tuple[bool, str]:
-    """corpus/06 section 4.2. All four conditions must hold. rupee_ceiling is
-    None because the corpus declares this gate ("the account's period value
-    below a declared rupee ceiling") without stating the number -- see
-    OPEN_QUESTIONS.md OQ-001. With rupee_ceiling=None this condition is
-    skipped rather than defaulted to some invented number; every other
-    condition still applies in full, so auto-accept is still refused outright
-    for every judgement class regardless of ceiling status.
+    """corpus/06 section 4.2. All four conditions must hold. rupee_ceiling
+    defaults to D-065's declared flat ₹1,00,000 per period (OQ-001, resolved
+    2026-08-24). Still accepts an explicit override (including None, which
+    skips this condition entirely) for callers/tests that need one, but
+    production callers get the real ceiling without having to know its value.
 
     Returns (accepted, reason) -- reason is always populated, including on
     acceptance, so the audit trail can say why."""
@@ -116,5 +121,5 @@ def evaluate_auto_accept(
 
     reason = "exact rule match, not a judgement class, no conflicting prior mapping"
     if rupee_ceiling is None:
-        reason += " (rupee ceiling undeclared -- OQ-001 -- not gated on)"
+        reason += " (rupee ceiling explicitly not applied for this call)"
     return True, reason

@@ -78,23 +78,24 @@ def test_consumer_cm_ladder_ties_and_balance_sheet_balances(conn, tenant):
     suspense_signed = balances.get("suspense.unmapped", Decimal("0"))
     trial_balance_residual = sum(balances.values(), Decimal("0"))
 
-    # OQ-006 and OQ-007. This company's suspense balance is mostly its
-    # "Marketplace Revenue Earned" ledger, which has no canonical class
-    # anywhere in corpus/06 even though D-004 and D-061 both say commission
-    # earned under the marketplace model is revenue (OQ-006). Suspense is a
-    # memo class, so it is excluded from both sides of the sheet and the gap
-    # is fixed by arithmetic (OQ-007):
+    # OQ-006, resolved 2026-08-24: "Marketplace Revenue Earned" now has a real
+    # canonical class (revenue.commission_marketplace, src/mapping/rules.py)
+    # instead of falling to suspense.unmapped -- this company's small COA (23
+    # ledgers) has an exact rule for every one of them (see the coverage
+    # assertion above), so suspense should now be exactly zero: no seeded
+    # defect leaves an intentionally-unmappable tail here the way defect #10
+    # does for the manufacturer reference company.
     #
-    #     assets - (liabilities + equity) == trial_balance_residual - suspense
-    #
-    # The sheet therefore does not balance and, per CLAUDE.md invariant 9, is
-    # not displayed. Asserting the identity proves the gap is entirely
-    # unclassified value rather than an assembly error. Restore
-    # `assert bs.balances` when OQ-006 and OQ-007 are resolved.
-    assert suspense_signed != 0, "the unmappable marketplace revenue ledger has vanished"
-    assert bs.balances is False
-    assert bs.total_assets - bs.total_liabilities_and_equity == trial_balance_residual - suspense_signed, (
-        f"the balance sheet gap is not fully explained: "
-        f"gap={bs.total_assets - bs.total_liabilities_and_equity}, "
-        f"trial_balance_residual={trial_balance_residual}, suspense={suspense_signed}"
-    )
+    # OQ-007, resolved 2026-08-24: even if some suspense value remained, it
+    # would no longer block the sheet from balancing (see
+    # test_statements_tie_manufacturer.py's comment on the same fix) -- but
+    # for this company specifically, OQ-006 alone should already leave
+    # nothing in suspense. The consumer dataset also seeds no genuine
+    # trial-balance-breaking defect (only defect #12, a zero-COGS line, which
+    # doesn't unbalance anything) -- so trial_balance_residual should be
+    # exactly zero (D-051) and the sheet should now fully balance.
+    assert suspense_signed == 0, ("expected nothing left in suspense now that the marketplace revenue "
+        "ledger has a real class (OQ-006) -- if this fires, some other consumer ledger has no exact rule")
+    assert trial_balance_residual == 0, "unexpected genuine trial-balance imbalance -- this dataset seeds no defect that should cause one"
+    assert bs.balances is True
+    assert bs.total_assets == bs.total_liabilities_and_equity
