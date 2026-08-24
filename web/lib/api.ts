@@ -572,6 +572,21 @@ export async function getForecastScenario(
   return asJson(res);
 }
 
+/** Removes a saved scenario from the Forecasting screen. Server-side this is
+ *  an archive, not a row delete (CLAUDE.md invariant 4): the scenario stops
+ *  being listed and stops being runnable, while every forecast run it already
+ *  produced stays readable with the assumptions that produced it. */
+export async function deleteForecastScenario(
+  accessToken: string, scenarioId: number, entityId: number
+): Promise<{ scenario_id: number; archived: boolean }> {
+  const params = new URLSearchParams({ entity_id: String(entityId) });
+  const res = await fetch(`${API_BASE}/forecast/scenarios/${scenarioId}?${params}`, {
+    method: "DELETE",
+    headers: authHeaders(accessToken),
+  });
+  return asJson(res);
+}
+
 export async function runForecastScenario(
   accessToken: string, scenarioId: number, entityId: number, asOf?: string
 ): Promise<ForecastRunResult> {

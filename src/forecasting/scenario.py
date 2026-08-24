@@ -48,23 +48,57 @@ def create_scenario(conn, schema: str, tenant_id: str, entity_id: int, name: str
 
 
 def list_scenarios(conn, schema: str, tenant_id: str, entity_id: int) -> list[dict]:
+    """Live scenarios only. An archived one (see archive_scenario) is gone
+    from every list, but never gone from the database."""
     with conn.cursor() as cur:
         cur.execute(
             f'SELECT scenario_id, name, created_by, created_at FROM "{schema}".forecast_scenario '
-            f'WHERE tenant_id=%s AND entity_id=%s ORDER BY created_at DESC',
+            f'WHERE tenant_id=%s AND entity_id=%s AND archived_at IS NULL ORDER BY created_at DESC',
             (tenant_id, entity_id),
         )
         return [{"scenario_id": r[0], "name": r[1], "created_by": r[2], "created_at": r[3]}
                   for r in cur.fetchall()]
 
 
-def get_scenario(conn, schema: str, tenant_id: str, entity_id: int, scenario_id: int) -> tuple[str, ForecastDrivers]:
+def archive_scenario(conn, schema: str, tenant_id: str, entity_id: int, scenario_id: int,
+                         archived_by: str) -> None:
+    """The "delete a scenario" action, corpus/13 section 4.
+
+    It archives; it does not remove. CLAUDE.md invariant 4 -- nothing in this
+    system is deleted -- and forecast_run.scenario_id points here: a run
+    stores the projection these exact assumptions produced, so removing the
+    row would strand that run with no record of what it assumed. Setting
+    archived_at drops the scenario out of list_scenarios and get_scenario,
+    which is what a user means by "delete it", while every run it already
+    produced stays readable with its provenance intact.
+
+    Raises ValueError if the scenario is not this tenant/entity's, or was
+    already archived -- an archive is not idempotent-by-silence, because
+    "nothing happened" and "it worked" must not look the same to the caller.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            f'UPDATE "{schema}".forecast_scenario SET archived_at=now(), archived_by=%s '
+            f'WHERE tenant_id=%s AND entity_id=%s AND scenario_id=%s AND archived_at IS NULL',
+            (archived_by, tenant_id, entity_id, scenario_id),
+        )
+        if cur.rowcount != 1:
+            raise ValueError(f"no live forecast_scenario {scenario_id} for this tenant/entity")
+
+
+def get_scenario(conn, schema: str, tenant_id: str, entity_id: int, scenario_id: int,
+                     include_archived: bool = False) -> tuple[str, ForecastDrivers]:
     """Returns (name, drivers). Raises if the scenario doesn't belong to
-    this tenant/entity -- never trust a bare id across a tenant boundary."""
+    this tenant/entity -- never trust a bare id across a tenant boundary --
+    or if it has been archived, which is why run_scenario cannot project an
+    assumption set the user has removed. include_archived is for reading the
+    assumptions behind an already-stored forecast_run, where the whole point
+    is that the record survives the archive."""
+    archived_clause = "" if include_archived else " AND archived_at IS NULL"
     with conn.cursor() as cur:
         cur.execute(
             f'SELECT name, driver_assumptions FROM "{schema}".forecast_scenario '
-            f'WHERE tenant_id=%s AND entity_id=%s AND scenario_id=%s',
+            f'WHERE tenant_id=%s AND entity_id=%s AND scenario_id=%s{archived_clause}',
             (tenant_id, entity_id, scenario_id),
         )
         row = cur.fetchone()

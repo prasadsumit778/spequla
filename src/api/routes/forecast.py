@@ -13,7 +13,8 @@ from pydantic import BaseModel
 from src.api.deps.auth import Session, require_upload_role
 from src.api.deps.tenant import resolve_tenant
 from src.forecasting.drivers import ForecastDrivers
-from src.forecasting.scenario import create_scenario, get_run, get_scenario, list_scenarios, run_scenario
+from src.forecasting.scenario import (archive_scenario, create_scenario, get_run, get_scenario,
+                                          list_scenarios, run_scenario)
 from src.reports.query import NoApprovedMappingError, resolve_mapping_version_for_period
 
 router = APIRouter()
@@ -56,6 +57,23 @@ def get_forecast_scenario(scenario_id: int, entity_id: int = 1,
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     return {"scenario_id": scenario_id, "name": name, "drivers": drivers.model_dump(mode="json")}
+
+
+@router.delete("/forecast/scenarios/{scenario_id}")
+def delete_forecast_scenario(scenario_id: int, entity_id: int = 1,
+                                 session: Session = Depends(require_upload_role),
+                                 tenant_ctx=Depends(resolve_tenant)):
+    """Removes a saved scenario from the Forecasting screen. Archival, not a
+    row DELETE -- CLAUDE.md invariant 4, and every forecast_run this scenario
+    produced keeps pointing at the assumptions that produced it. See
+    src/forecasting/scenario.py's archive_scenario."""
+    conn, tenant_id, schema = tenant_ctx
+    try:
+        archive_scenario(conn, schema, tenant_id, entity_id, scenario_id, session.user_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    conn.commit()
+    return {"scenario_id": scenario_id, "archived": True}
 
 
 class RunScenarioRequest(BaseModel):

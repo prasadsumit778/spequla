@@ -3,6 +3,7 @@
 import { useState } from "react";
 import {
   createForecastScenario,
+  deleteForecastScenario,
   listForecastScenarios,
   runForecastScenario,
   type CostDrivers,
@@ -19,6 +20,7 @@ import PageHeader from "@/components/app/PageHeader";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import { Card, CardBody, CardHeader } from "@/components/ui/Card";
+import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import { Field, Input, Toolbar } from "@/components/ui/Field";
 import { Table, TBody, TD, TFrame, TH, THead, TR } from "@/components/ui/TableExports";
 import { Callout, EmptyState, ErrorState, SkeletonTable } from "@/components/ui/States";
@@ -33,7 +35,21 @@ type FormatFormState = {
   customerGrowthPct: string;
 };
 
-type OnlineRowState = { channelName: string; ordersGrowthPct: string; priceGrowthPct: string };
+/** rowId is a client-side key only -- never sent to the API. Rows are
+ *  removable, and an array index would let React carry one row's DOM (and
+ *  its focus/selection) over to the row that slid up into its place. */
+type OnlineRowState = {
+  rowId: number;
+  channelName: string;
+  ordersGrowthPct: string;
+  priceGrowthPct: string;
+};
+
+let nextOnlineRowId = 1;
+
+function newOnlineRow(): OnlineRowState {
+  return { rowId: nextOnlineRowId++, channelName: "", ordersGrowthPct: "25", priceGrowthPct: "2.5" };
+}
 
 const DEFAULT_FORMAT_STATE: FormatFormState = {
   enabled: false, storesAddedPerYear: "", year1AvgAnnualSalesInr: "", priceGrowthPct: "4", customerGrowthPct: "2.5",
@@ -59,13 +75,30 @@ export default function ForecastPage() {
 
   const [lastRun, setLastRun] = useState<ForecastRunResult | null>(null);
   const [runningScenarioId, setRunningScenarioId] = useState<number | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<ForecastScenarioSummary | null>(null);
 
   const runAction = useApiAction((token: string, scenarioId: number) => runForecastScenario(token, scenarioId, entityId));
+  const deleteAction = useApiAction((token: string, scenarioId: number) =>
+    deleteForecastScenario(token, scenarioId, entityId)
+  );
 
   async function handleRun(scenarioId: number) {
     setRunningScenarioId(scenarioId);
     const result = await runAction.run(scenarioId);
     if (result) setLastRun(result);
+  }
+
+  async function handleConfirmDelete() {
+    if (!pendingDelete) return;
+    const deletedId = pendingDelete.scenario_id;
+    const result = await deleteAction.run(deletedId);
+    if (!result) return; // the dialog stays open and shows deleteAction.error
+    setPendingDelete(null);
+    // A projection on screen belongs to a scenario that can no longer be run,
+    // and there is no longer a row it can be traced back to. Clear it rather
+    // than leave a set of numbers with a broken provenance trail.
+    setLastRun((run) => (run && run.scenario_id === deletedId ? null : run));
+    scenarios.reload();
   }
 
   return (
@@ -93,7 +126,9 @@ export default function ForecastPage() {
               <ScenarioList
                 scenarios={scenarios.data}
                 onRun={handleRun}
+                onDelete={setPendingDelete}
                 busyScenarioId={runAction.busy ? runningScenarioId : null}
+                deletingScenarioId={deleteAction.busy ? pendingDelete?.scenario_id ?? null : null}
                 error={runAction.error}
               />
             )}
@@ -102,6 +137,32 @@ export default function ForecastPage() {
       </div>
 
       {lastRun && <RunResult result={lastRun} />}
+
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        title="Delete this scenario?"
+        description={
+          <>
+            <p>
+              <span className="font-medium text-ink">{pendingDelete?.name}</span> will no longer be listed here and
+              can no longer be run.
+            </p>
+            <p className="mt-2">
+              Forecast runs it already produced stay readable, with the assumptions that produced them attached —
+              nothing in this system is erased.
+            </p>
+          </>
+        }
+        confirmLabel="Delete scenario"
+        busy={deleteAction.busy}
+        busyLabel="Deleting"
+        error={deleteAction.error}
+        onConfirm={handleConfirmDelete}
+        onCancel={() => {
+          setPendingDelete(null);
+          deleteAction.clearError();
+        }}
+      />
     </>
   );
 }
@@ -109,12 +170,16 @@ export default function ForecastPage() {
 function ScenarioList({
   scenarios,
   onRun,
+  onDelete,
   busyScenarioId,
+  deletingScenarioId,
   error,
 }: {
   scenarios: ForecastScenarioSummary[];
   onRun: (scenarioId: number) => void;
+  onDelete: (scenario: ForecastScenarioSummary) => void;
   busyScenarioId: number | null;
+  deletingScenarioId: number | null;
   error: string | null;
 }) {
   return (
@@ -136,15 +201,26 @@ function ScenarioList({
                 <TD>{s.created_by}</TD>
                 <TD>{s.created_at ? formatDate(s.created_at) : "—"}</TD>
                 <TD align="right">
-                  <Button
-                    size="sm"
-                    variant="primary"
-                    onClick={() => onRun(s.scenario_id)}
-                    busy={busyScenarioId === s.scenario_id}
-                    busyLabel="Running"
-                  >
-                    Run
-                  </Button>
+                  <div className="flex justify-end gap-2">
+                    <Button
+                      size="sm"
+                      variant="primary"
+                      onClick={() => onRun(s.scenario_id)}
+                      busy={busyScenarioId === s.scenario_id}
+                      busyLabel="Running"
+                    >
+                      Run
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="danger"
+                      onClick={() => onDelete(s)}
+                      busy={deletingScenarioId === s.scenario_id}
+                      busyLabel="Deleting"
+                    >
+                      Delete
+                    </Button>
+                  </div>
                 </TD>
               </TR>
             ))}
@@ -165,9 +241,7 @@ function ScenarioBuilder({ entityId, onSaved }: { entityId: number; onSaved: () 
       FormatFormState
     >
   );
-  const [onlineRows, setOnlineRows] = useState<OnlineRowState[]>([
-    { channelName: "", ordersGrowthPct: "25", priceGrowthPct: "2.5" },
-  ]);
+  const [onlineRows, setOnlineRows] = useState<OnlineRowState[]>(() => [newOnlineRow()]);
   const [costs, setCosts] = useState({
     storePersonnelGrowthPct: "7", storeRentGrowthPct: "6", franchiseCommissionRatePct: "10",
     hoCostGrowthPct: "7.5", onlineCommissionRatePct: "16", onlineAdSpendPctOfSalesPct: "7.5",
@@ -300,31 +374,54 @@ function ScenarioBuilder({ entityId, onSaved }: { entityId: number; onSaved: () 
             <p className="label-caps">Online channels</p>
             <Button
               size="sm" variant="ghost"
-              onClick={() => setOnlineRows((rows) => [...rows, { channelName: "", ordersGrowthPct: "25", priceGrowthPct: "2.5" }])}
+              onClick={() => setOnlineRows((rows) => [...rows, newOnlineRow()])}
             >
               + Add channel
             </Button>
           </div>
           <div className="space-y-2">
-            {onlineRows.map((row, i) => (
-              <div key={i} className="grid grid-cols-3 gap-2">
-                <Input
-                  placeholder="Channel name, matching your data"
-                  value={row.channelName}
-                  onChange={(e) => setOnlineRows((rows) => rows.map((r, j) => (j === i ? { ...r, channelName: e.target.value } : r)))}
-                />
-                <Input
-                  placeholder="Orders growth % / yr"
-                  value={row.ordersGrowthPct}
-                  onChange={(e) => setOnlineRows((rows) => rows.map((r, j) => (j === i ? { ...r, ordersGrowthPct: e.target.value } : r)))}
-                />
-                <Input
-                  placeholder="Price growth % / yr"
-                  value={row.priceGrowthPct}
-                  onChange={(e) => setOnlineRows((rows) => rows.map((r, j) => (j === i ? { ...r, priceGrowthPct: e.target.value } : r)))}
-                />
-              </div>
-            ))}
+            {onlineRows.map((row, i) => {
+              const patch = (p: Partial<OnlineRowState>) =>
+                setOnlineRows((rows) => rows.map((r) => (r.rowId === row.rowId ? { ...r, ...p } : r)));
+              return (
+                <div key={row.rowId} className="flex items-start gap-2">
+                  <div className="grid min-w-0 flex-1 grid-cols-3 gap-2">
+                    <Input
+                      placeholder="Channel name, matching your data"
+                      value={row.channelName}
+                      onChange={(e) => patch({ channelName: e.target.value })}
+                    />
+                    <Input
+                      placeholder="Orders growth % / yr"
+                      value={row.ordersGrowthPct}
+                      onChange={(e) => patch({ ordersGrowthPct: e.target.value })}
+                    />
+                    <Input
+                      placeholder="Price growth % / yr"
+                      value={row.priceGrowthPct}
+                      onChange={(e) => patch({ priceGrowthPct: e.target.value })}
+                    />
+                  </div>
+                  {/* Nothing is saved until "Save scenario", so removing a row
+                      here is form state only -- there is no scenario yet to
+                      version forward. */}
+                  <button
+                    type="button"
+                    aria-label={row.channelName.trim() ? `Remove ${row.channelName.trim()}` : `Remove channel ${i + 1}`}
+                    title="Remove this channel"
+                    onClick={() => setOnlineRows((rows) => rows.filter((r) => r.rowId !== row.rowId))}
+                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-control border border-line-strong bg-surface text-base leading-none text-ink-muted transition-colors hover:border-neg-line hover:bg-neg-soft hover:text-neg"
+                  >
+                    <span aria-hidden="true">&times;</span>
+                  </button>
+                </div>
+              );
+            })}
+            {onlineRows.length === 0 && (
+              <p className="text-[13px] text-ink-muted">
+                No online channels in this scenario. Add one above if the company sells online.
+              </p>
+            )}
           </div>
         </div>
 
