@@ -11,9 +11,10 @@ held... names the missing input"). A crash, a fabricated number, or a wrong
 reason is the only kind of failure this test treats as a failure. See
 tests/fixtures/golden_ir.py for exactly which of the 37 fall into which
 bucket and why, worked out from this project's actual current state: only
-COA/TB/GL/Bank are ingested (no customer/product dimension, no AR/AP
-ageing), D-006/D-012/D-015/D-016/D-017/D-018 remain open for the synthetic
-manufacturer, and 5 of the 37 need fact_channel_order_line (Sprint 6).
+COA/TB/GL/Bank are ingested (no customer/product dimension), only
+D-041, D-042, D-050 and D-052 remain open after the 2026-08-24 resolutions
+(corpus/00 "Still open: 4"), and 5 of the 37 need fact_channel_order_line
+(Sprint 6).
 
 Needs live Postgres -- skips cleanly otherwise, consistent with every
 other sprint's acceptance test in this repo.
@@ -35,18 +36,27 @@ from tests.helpers import ingest_manufacturer, run_and_freeze_mapping
 
 # Expected status per real (non-consumer) gating question, worked out from
 # this project's actual current state -- see this module's docstring.
+#
+# Six questions moved blocked -> ok on 2026-08-24. Not a behaviour change in
+# Ask: D-001, D-002, D-006, D-012, D-015, D-016, D-017 and D-018 were
+# resolved that day (corpus/00 section 2b), which empties the
+# `unresolved_decisions` closure behind net_revenue, ebitda, dso and the cash
+# conversion cycle. With no open decision left to name, refusing these would
+# now be the defect. "Where did the cash go last month?" stays blocked for an
+# unrelated and still-live reason -- OQ-004, eight cash flow leaf metrics with
+# no formula anywhere in the corpus.
 EXPECTED_STATUS = {
-    "What was our revenue last month?": "blocked",
+    "What was our revenue last month?": "ok",
     "Show me the P&L for last quarter.": "ok",
-    "What is our EBITDA this year to date?": "blocked",
-    "Show revenue for the last twelve months.": "blocked",
-    "Why did EBITDA decline?": "blocked",
+    "What is our EBITDA this year to date?": "ok",
+    "Show revenue for the last twelve months.": "ok",
+    "Why did EBITDA decline?": "ok",
     "What is our revenue by customer this quarter?": "unavailable",
     "Who are our top ten customers by revenue?": "unavailable",
     "What is our gross margin by product?": "unavailable",
     "Which products have the highest margins?": "unavailable",
-    "What is our current DSO?": "blocked",
-    "How has our cash conversion cycle changed?": "blocked",
+    "What is our current DSO?": "ok",
+    "How has our cash conversion cycle changed?": "ok",
     "How much receivable is over ninety days?": "unavailable",
     "How much cash do we have?": "ok",
     "What is our net debt?": "ok",

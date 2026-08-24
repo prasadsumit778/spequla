@@ -36,11 +36,27 @@ def test_manufacturer_statements_tie_and_balance_sheet_balances(conn, tenant):
     # -- Independent reference, computed from the same in-memory GL rows the
     # generator produced, grouped by each ledger's OWN role attribute rather
     # than through the mapping engine under test.
+    # D-015 and D-016 (corpus/00, resolved 2026-08-24) moved power and fuel
+    # and direct labour out of COGS into opex -- `cogs.power_fuel` ->
+    # `opex.power_fuel`, `cogs.direct_labour` -> `opex.direct_labour`
+    # (corpus/06 section 3.3, config/taxonomy.yml).
+    #
+    # The generator still gives these three ledgers role="cogs", and
+    # deliberately so, on both counts: they genuinely ARE factory expenses in
+    # this company's own books, and `role` is what drives how the generator
+    # distributes value across ledgers (synthetic/manufacturer/engine.py's
+    # direct_cogs_ledgers / opex_ledgers weighting), so changing it there
+    # would silently change the dataset rather than its classification. What
+    # D-015/D-016 changed is SPEQULA's canonical treatment of these costs,
+    # not the company's bookkeeping -- so the reclassification belongs here,
+    # in how the reference groups the same raw GL rows.
+    RECLASSIFIED_TO_OPEX = {"Direct Labour - Plant 1", "Direct Labour - Plant 2", "Power & Fuel"}
+
     role_by_name = {l.account_name: l.role for l in data.coa}
     revenue_names = {l.account_name for l in data.coa if l.role == "revenue"}
     contra_names = {l.account_name for l in data.coa if l.role == "contra_revenue"}
-    cogs_names = {l.account_name for l in data.coa if l.role == "cogs"}
-    opex_names = {l.account_name for l in data.coa if l.role == "opex"}
+    cogs_names = {l.account_name for l in data.coa if l.role == "cogs"} - RECLASSIFIED_TO_OPEX
+    opex_names = {l.account_name for l in data.coa if l.role == "opex"} | RECLASSIFIED_TO_OPEX
 
     ref_revenue = Decimal("0")
     ref_returns = Decimal("0")

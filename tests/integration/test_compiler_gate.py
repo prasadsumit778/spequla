@@ -56,7 +56,21 @@ def test_gated_metrics_do_not_serve_a_default(conn, tenant):
     serve a default.' Every one of these has dependencies that route back to
     an open per-company decision -- none should ever produce a numeric
     value against this synthetic company, and each must name the actual
-    blocking decision, not a generic failure."""
+    blocking decision, not a generic failure.
+
+    Rewritten 2026-08-24. This test previously asserted that net_revenue,
+    gross_margin_pct, ebitda, working_capital, dso, dio and dpo were all
+    blocked, by D-001/D-002/D-006/D-012/D-015/D-016/D-017/D-018. Those eight
+    decisions were resolved on 2026-08-24 (corpus/00 section 2b, "Still open"
+    cut from 12 to 4), so those seven metrics now correctly serve a number
+    and their old expectations were asserting a world that no longer exists.
+
+    The invariant itself is unchanged and still needs a live guard, so the
+    test now points at the metrics that ARE still gated. Per corpus/00's
+    "Still open: 4" table, exactly four decisions remain open -- D-041,
+    D-042, D-050, D-052 -- and per corpus/05's `unresolved_decisions` column
+    exactly four metrics route back to them. Both sides are read from the
+    corpus, not from what the compiler happens to return."""
     tenant_id, schema = tenant
     entity_id = 1
     ingest_manufacturer(conn, schema, tenant_id, entity_id)
@@ -67,17 +81,16 @@ def test_gated_metrics_do_not_serve_a_default(conn, tenant):
 
     expectations = {
         # Transitive, per corpus/05's `dependencies` + `unresolved_decisions`
-        # columns: net_revenue's own open decision is D-006, and it depends on
-        # gross_revenue, whose own open decisions are D-001 and D-002. The
-        # closure is what gates the metric -- the same reason dso and
-        # gross_margin_pct below carry D-001/D-002 through this identical path.
-        "net_revenue": {"D-006", "D-001", "D-002"},
-        "gross_margin_pct": {"D-006", "D-012", "D-015", "D-016", "D-017", "D-018", "D-001", "D-002"},
-        "ebitda": {"D-006", "D-012", "D-015", "D-016", "D-017", "D-018", "D-001", "D-002"},
-        "working_capital": {"D-018"},
-        "dso": {"D-006", "D-001", "D-002"},
-        "dio": {"D-018", "D-012", "D-015", "D-016", "D-017"},
-        "dpo": {"D-012", "D-015", "D-016", "D-017", "D-018"},
+        # columns. volume_sold and volume_produced carry D-041 directly (no
+        # declared unit of measure, so nothing per-unit computes at all).
+        # realisation_per_unit depends on volume_sold and inherits D-041
+        # through the closure -- its other dependency, net_revenue, is now
+        # clean. capacity_utilisation_pct carries its own D-042 and inherits
+        # D-041 from volume_produced.
+        "volume_sold": {"D-041"},
+        "volume_produced": {"D-041"},
+        "realisation_per_unit": {"D-041"},
+        "capacity_utilisation_pct": {"D-042", "D-041"},
     }
     for metric_id, expected_decisions in expectations.items():
         result = compile_metric(conn, schema, tenant_id, entity_id, metric_id, period, config)
@@ -91,6 +104,38 @@ def test_gated_metrics_do_not_serve_a_default(conn, tenant):
             assert False, f"{metric_id}: a blocked metric must never be citable"
         except NotCitable:
             pass
+
+
+def test_metrics_whose_decisions_are_resolved_are_not_over_blocked(conn, tenant):
+    """The other half of the gate, and the half that had no guard before
+    2026-08-24: the gate must not block a metric whose decisions are all
+    resolved. corpus/05 carries no `unresolved_decisions` for any of these
+    and corpus/00 lists none of their governing decisions as open, so a
+    'blocked' here would mean the compiler is refusing to serve a number the
+    corpus says it can -- as real a defect as serving one it cannot, and the
+    exact failure this file's sibling test would no longer catch.
+
+    Asserts status only, never a value: the value belongs to the statement
+    tie tests, which compute it independently."""
+    tenant_id, schema = tenant
+    entity_id = 1
+    ingest_manufacturer(conn, schema, tenant_id, entity_id)
+    run_and_freeze_mapping(conn, schema, tenant_id, entity_id, effective_from=date(2022, 4, 1))
+
+    config = load_registry()
+    period = "2025-03"
+
+    # The seven this file used to assert were blocked, before D-001, D-002,
+    # D-006, D-012, D-015, D-016, D-017 and D-018 were resolved.
+    for metric_id in ("net_revenue", "gross_margin_pct", "ebitda",
+                        "working_capital", "dso", "dio", "dpo"):
+        result = compile_metric(conn, schema, tenant_id, entity_id, metric_id, period, config)
+        assert result.status == "ok", (
+            f"{metric_id} is blocked by {result.blocking_decisions}, but corpus/00 records "
+            f"every decision governing it as resolved: {result.reason}"
+        )
+        assert result.value is not None
+        assert not result.blocking_decisions
 
 
 def test_no_approved_mapping_blocks_every_metric_before_the_decision_gate_matters(conn, tenant):
