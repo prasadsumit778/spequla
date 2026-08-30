@@ -152,3 +152,43 @@ def test_no_approved_mapping_blocks_every_metric_before_the_decision_gate_matter
     assert result.status == "blocked"
     assert result.value is None
     assert "approved" in result.reason.lower()
+
+
+def test_rows_with_no_resolving_source_file_are_not_citable(conn, tenant):
+    """corpus/07 section 8 / CLAUDE.md invariant 7. The DB-backed half of
+    the empty-source_files guard: load_run_ids is populated, so
+    fetch_source_files really queries app.source_file -- and finds nothing.
+    A number whose drill-through names no uploaded file is not displayed.
+
+    tests/unit/test_citation.py covers the no-query half (an empty
+    load_run_ids, answered with [] before any round trip)."""
+    tenant_id, schema = tenant
+    entity_id = 1
+    ingest_manufacturer(conn, schema, tenant_id, entity_id)
+    version_id, _summary, freeze = run_and_freeze_mapping(conn, schema, tenant_id, entity_id,
+                                                              effective_from=date(2022, 4, 1))
+    assert freeze.passed, freeze.reason
+
+    config = load_registry()
+    cash = compile_metric(conn, schema, tenant_id, entity_id, "cash", "2025-03", config)
+    assert cash.status == "ok", cash.reason
+    assert cash.row_count > 0
+
+    # Confirm the load_run_id this metric really carries has a source_file
+    # behind it -- otherwise the negative below would pass for the wrong
+    # reason.
+    citable = build_citation(conn, schema, tenant_id, entity_id, version_id, cash, "reconciled")
+    assert len(citable.source_files) > 0
+
+    # Now point the same resolved metric at a load run that was never
+    # recorded. Nothing else about it changes: same value, same row count.
+    with conn.cursor() as cur:
+        cur.execute("SELECT COALESCE(MAX(load_run_id), 0) + 1000 FROM app.load_run")
+        orphan_load_run_id = cur.fetchone()[0]
+    cash.load_run_ids = {orphan_load_run_id}
+
+    try:
+        build_citation(conn, schema, tenant_id, entity_id, version_id, cash, "reconciled")
+        assert False, "a metric whose rows trace to no source file must not be citable"
+    except NotCitable as e:
+        assert "source file" in str(e)

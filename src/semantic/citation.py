@@ -18,9 +18,20 @@ from src.semantic.compiler import CompiledMetric
 
 
 class NotCitable(Exception):
-    """Raised if build_citation is asked to cite a metric that did not
-    resolve to a value -- a programming error in the caller, not a normal
-    outcome a user should ever see."""
+    """Raised when build_citation cannot produce a citation that resolves to
+    source rows. Two kinds of cause, both ending the same way -- the number is
+    not displayed:
+
+      - The metric did not resolve to a value at all. A programming error in
+        the caller, not a normal outcome a user should ever see.
+      - The metric resolved, but nothing backs it: no source rows, or no
+        source file behind the rows. Not a caller error -- a real data
+        condition, and precisely the one corpus/07 section 8 exists to catch
+        ("every number is clickable through to the rows that produced it").
+
+    Raising rather than returning a flag is deliberate. A caller that forgets
+    to check a returned signal displays an uncited number; a caller that
+    forgets to catch this gets an exception. Invariant #7 is not opt-in."""
 
 
 @dataclass
@@ -93,13 +104,45 @@ def fetch_unmapped_value_inr(conn, schema: str, mapping_version_id: int) -> Deci
 def build_citation(conn, schema: str, tenant_id: str, entity_id: int, mapping_version_id: int,
                      compiled: CompiledMetric, reconciliation_status: str,
                      snapshot_at: datetime | None = None) -> Citation:
+    """corpus/07 section 8. A citation is only a citation if it resolves: the
+    three guards below are the difference between "this number is backed by
+    12,406 rows of Tally export" and "this number is backed by nothing, and
+    looks identical."
+
+    The row_count and source_files guards are not thresholds (CLAUDE.md
+    section 3.2) -- zero is the structural boundary between a drill_url that
+    resolves and one that does not, stated by corpus/07 section 8's own first
+    property, "every number is clickable through to the rows that produced
+    it." Nothing here is a materiality judgement.
+
+    Safe across every metric shape: src/semantic/compiler.py populates
+    row_count and load_run_ids from real fact rows on both the leaf path
+    (_fetch_leaf_amounts' COUNT(*)) and the derived path (the summed
+    dependency closure) -- so an 'ok' metric with zero rows is always a
+    metric with nothing behind it, never a legitimately-empty aggregate."""
     if compiled.status != "ok" or compiled.value is None:
         raise NotCitable(f"{compiled.metric_id} did not resolve to a value (status={compiled.status})")
+
+    if compiled.row_count == 0:
+        raise NotCitable(
+            f"{compiled.metric_id} resolved to {compiled.value} for {compiled.period_key}, but no source "
+            f"rows produced it -- its drill_url would resolve to nothing. A value with an empty result set "
+            f"behind it is not a number this system displays (corpus/07 section 8, CLAUDE.md invariant 7)."
+        )
 
     snap = (snapshot_at or datetime.now(timezone.utc)).isoformat()
     query_hash = compute_query_hash(tenant_id, compiled.metric_id, entity_id, compiled.period_key,
                                         compiled.mapping_version_no, snap)
+
     source_files = fetch_source_files(conn, schema, tenant_id, compiled.load_run_ids)
+    if not source_files:
+        raise NotCitable(
+            f"{compiled.metric_id} has {compiled.row_count} source row(s) for {compiled.period_key} but no "
+            f"source file resolves behind them (load_run_ids={sorted(compiled.load_run_ids)}) -- corpus/07 "
+            f"section 8's source_files is what makes the number traceable to what the client uploaded, and "
+            f"an empty list traces to nothing."
+        )
+
     unmapped = fetch_unmapped_value_inr(conn, schema, mapping_version_id)
 
     return Citation(
