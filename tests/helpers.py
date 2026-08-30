@@ -127,3 +127,62 @@ def run_and_freeze_mapping(conn, schema: str, tenant_id: str, entity_id: int, ef
     freeze = freeze_mapping_version(conn, schema, tenant_id, entity_id, version_id, approver)
     conn.commit()
     return version_id, summary, freeze
+
+
+def advance_periods_to_reconciled(conn, schema: str, tenant_id: str, entity_id: int,
+                                     mapping_version_id: int, freeze, period_keys: list[str],
+                                     approver: str = "pytest-analyst") -> dict[str, str]:
+    """Drives named periods VALIDATED -> MAPPED -> RECONCILED through exactly
+    the functions the real callers use, so a fixture that wants a reportable
+    period gets one the same way production does.
+
+    corpus/09 section 5's arrows, and who drives each: MAPPED comes from
+    map_periods_for_mapping_version (what POST /mapping/runs/{id}/freeze
+    calls, src/api/routes/mapping.py); RECONCILED comes from
+    reconcile_period_from_current_checks (what POST /periods/{key}/reconcile
+    calls, src/api/routes/periods.py), which computes the trial balance
+    itself and finds the period's own books-to-bank run -- so this helper
+    runs run_books_to_bank + write_reconciliation_run first to put that run
+    in the table, and asserts nothing about the period's condition.
+
+    **Nothing here forces a period through.** A period whose trial balance
+    does not tie (D-051, zero tolerance) is refused by reconcile_period and
+    stays where it is; a period held at OPEN by a blocking exception is
+    never mapped in the first place. The returned dict is the status each
+    requested period ACTUALLY reached, so a caller asserts on it rather than
+    assuming. See tests/eval/test_golden_questions.py for a fixture that
+    asserts both outcomes.
+    """
+    from src.quality.books_to_bank import run_books_to_bank, write_reconciliation_run
+    from src.quality.period_state import (
+        InvalidTransition,
+        get_current_period_lock,
+        map_periods_for_mapping_version,
+        reconcile_period_from_current_checks,
+    )
+
+    map_periods_for_mapping_version(conn, schema, tenant_id, entity_id, mapping_version_id,
+                                       freeze_passed=freeze.passed, coverage_pct=freeze.coverage_pct)
+    conn.commit()
+
+    def _status(period_key: str) -> str:
+        row = get_current_period_lock(conn, schema, tenant_id, entity_id, period_key)
+        return row.status if row is not None else "open"
+
+    reached: dict[str, str] = {}
+    for period_key in period_keys:
+        if _status(period_key) != "mapped":
+            reached[period_key] = _status(period_key)
+            continue
+        result = run_books_to_bank(conn, schema, tenant_id, entity_id, mapping_version_id, period_key)
+        write_reconciliation_run(conn, schema, tenant_id, entity_id, mapping_version_id,
+                                    "books_to_bank", result, run_by=approver)
+        conn.commit()
+        try:
+            reconcile_period_from_current_checks(conn, schema, tenant_id, entity_id, period_key,
+                                                       approved_by=approver)
+            conn.commit()
+        except InvalidTransition:
+            conn.rollback()
+        reached[period_key] = _status(period_key)
+    return reached

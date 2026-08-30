@@ -27,6 +27,7 @@ from datetime import date
 from decimal import Decimal
 
 from src.config.loader import ConfigRegistry
+from src.quality.period_gate import STATEMENTS_REPORTABLE, resolve_period_reportability
 from src.quality.period_state import get_current_period_lock
 from src.reports.balance_sheet import assemble_balance_sheet
 from src.reports.pnl import assemble_consumer_cm_ladder, assemble_manufacturing_pnl
@@ -40,6 +41,7 @@ from src.semantic.bridges import (
 from src.semantic.compiler import CompiledMetric, compile_metric, period_bounds
 from src.semantic.formula import find_gl_class_patterns, match_gl_classes
 from src.semantic.ir import IRRequest
+from src.semantic.refusal import Refusal, refusal_for_unreportable_period
 
 UNAVAILABLE_DIMENSIONS = {
     "customer": "customer-level breakdown needs dim_customer and fact_gl_entry.customer_key, deferred since "
@@ -51,7 +53,7 @@ UNAVAILABLE_DIMENSIONS = {
 
 @dataclass
 class AskResult:
-    status: str  # 'ok' | 'blocked' | 'unavailable' | 'error'
+    status: str  # 'ok' | 'refused' | 'blocked' | 'unavailable' | 'error'
     intent: str
     sql_text: str | None = None
     tables_referenced: list[str] = field(default_factory=list)
@@ -62,6 +64,13 @@ class AskResult:
     blocking_decisions: list[str] = field(default_factory=list)
     compiled_metric: CompiledMetric | None = None
     row_count: int = 0
+    # Set only by the deterministic period gate below. Every other refusal in
+    # Ask is classified in src/semantic/ask.py from the result's status --
+    # this one cannot be, because "period not reportable" is a distinct
+    # corpus/07 section 6 class that a bare 'unavailable' would collapse into
+    # "requires data not held", losing the reconciliation status and the
+    # unmapped rupee value that class is required to state.
+    refusal: Refusal | None = None
 
 
 def _representative_gl_class_sql(schema: str, metric_id: str, formula: str, known_classes: list[str],
@@ -99,8 +108,47 @@ def _period_key_from_ir(ir: IRRequest) -> str:
     raise ValueError(f"period type {ir.period.type!r} not yet resolvable to a single month")
 
 
+def _refuse_unreportable(conn, schema: str, tenant_id: str, entity_id: int, intent: str,
+                            period_key: str) -> AskResult | None:
+    """corpus/07 section 6's "period not reportable" class, applied
+    deterministically before a period's numbers are computed.
+
+    Returns None when the period may be read, so a caller reads as
+    `if refused := _refuse_unreportable(...): return refused`.
+
+    **This runs first in every handler that produces a number**, ahead of
+    each handler's own availability checks. Where both apply -- "revenue by
+    customer" for an unmapped period, which is both unreportable and needs a
+    dimension this build has not got -- the period is the one to state.
+    Answering "customer breakdown is not built yet" carries the implication
+    that the period behind it is otherwise fine and the number would appear
+    once the feature lands, and that is not true. The dimension's own
+    refusal is still reached for any period that IS reportable.
+
+    Intents that never produce a number are deliberately not gated:
+    definition_lookup (a registry lookup, corpus/07 section 4: "No SQL
+    runs"), data_health (the screen that exists to explain the gate -- see
+    _data_health), and ageing/concentration (unconditionally unavailable in
+    this build, on a missing data source rather than on this period).
+    """
+    reportability = resolve_period_reportability(conn, schema, tenant_id, entity_id, period_key,
+                                                       STATEMENTS_REPORTABLE)
+    if reportability.reportable:
+        return None
+    return AskResult(
+        status="refused", intent=intent,
+        reason=reportability.detail(),
+        refusal=refusal_for_unreportable_period(
+            reportability.period_key, reportability.status, reportability.unmapped_value_inr,
+            reportability.unmapped_value_unavailable_reason,
+        ),
+    )
+
+
 def _metric_value(conn, schema, tenant_id, entity_id, ir: IRRequest, config: ConfigRegistry, tenant_profile: str = "manufacturing") -> AskResult:
     period_key = _period_key_from_ir(ir)
+    if refused := _refuse_unreportable(conn, schema, tenant_id, entity_id, ir.intent, period_key):
+        return refused
     contract = config.metrics[ir.metric]
     known_classes = [c.class_ for c in config.taxonomy]
     sql_text, tables = _representative_gl_class_sql(schema, ir.metric, contract.registry.formula,
@@ -129,15 +177,35 @@ def _metric_trend(conn, schema, tenant_id, entity_id, ir: IRRequest, config: Con
             m = 1
             y += 1
 
+    # The period gate runs per month here rather than over the window as a
+    # whole. A trend already reports a labelled status per month and has done
+    # since it was written, so an unreportable month becomes another labelled
+    # month rather than a reason to refuse the eleven around it -- nothing is
+    # silently dropped, which is the property that matters. Contrast
+    # src/quality/period_gate.first_unreportable, used by the statement
+    # routes, where the output is one set of totals and a missing month would
+    # disappear into them.
     series = []
     last_result = None
+    last_refusal: Refusal | None = None
     for pk in period_keys:
+        if refused := _refuse_unreportable(conn, schema, tenant_id, entity_id, ir.intent, pk):
+            last_refusal = refused.refusal
+            series.append({"period": pk, "status": "refused", "value": None, "reason": refused.reason})
+            continue
         r = compile_metric(conn, schema, tenant_id, entity_id, ir.metric, pk, config)
         last_result = r
         series.append({"period": pk, "status": r.status, "value": str(r.value) if r.value is not None else None,
                           "reason": r.reason})
 
     any_ok = any(s["status"] == "ok" for s in series)
+    if not any_ok and last_result is None and last_refusal is not None:
+        # Every month in the window was refused by the gate. The refusal
+        # names the last month -- a real period with a real status and a real
+        # unmapped value -- and `series` carries the per-month detail behind
+        # it, rather than inventing a status for the window as a whole.
+        return AskResult(status="refused", intent=ir.intent, series=series,
+                            reason=series[-1]["reason"], refusal=last_refusal)
     return AskResult(status="ok" if any_ok else (last_result.status if last_result else "error"),
                         intent=ir.intent, series=series,
                         reason=None if any_ok else (last_result.reason if last_result else None),
@@ -146,6 +214,8 @@ def _metric_trend(conn, schema, tenant_id, entity_id, ir: IRRequest, config: Con
 
 def _metric_comparison(conn, schema, tenant_id, entity_id, ir: IRRequest, config: ConfigRegistry, tenant_profile: str = "manufacturing") -> AskResult:
     period_key = _period_key_from_ir(ir)
+    if refused := _refuse_unreportable(conn, schema, tenant_id, entity_id, ir.intent, period_key):
+        return refused
     current = compile_metric(conn, schema, tenant_id, entity_id, ir.metric, period_key, config)
     if current.status != "ok":
         return AskResult(status="blocked" if current.status == "blocked" else "unavailable", intent=ir.intent,
@@ -162,18 +232,34 @@ def _metric_comparison(conn, schema, tenant_id, entity_id, ir: IRRequest, config
     else:
         return AskResult(status="error", intent=ir.intent, reason=f"unsupported compare_to {ir.compare_to.type!r}")
     compare_key = f"{cy:04d}-{cm:02d}"
-    compare = compile_metric(conn, schema, tenant_id, entity_id, ir.metric, compare_key, config)
+
+    # The comparison period is gated too, but reports its state in place
+    # rather than refusing the whole answer: the question asked for THIS
+    # period's number, and the payload already carries a status/reason for
+    # the comparison half. What it must never do is put a number there for a
+    # period that may not be read.
+    compare_refused = _refuse_unreportable(conn, schema, tenant_id, entity_id, ir.intent, compare_key)
+    if compare_refused is not None:
+        compare_cell = {"period": compare_key, "value": None, "status": "refused",
+                          "reason": compare_refused.reason}
+    else:
+        compare = compile_metric(conn, schema, tenant_id, entity_id, ir.metric, compare_key, config)
+        compare_cell = {"period": compare_key, "value": str(compare.value) if compare.status == "ok" else None,
+                          "status": compare.status, "reason": compare.reason}
 
     return AskResult(
         status="ok", intent=ir.intent,
-        value={"current": {"period": period_key, "value": str(current.value)},
-                "compare": {"period": compare_key, "value": str(compare.value) if compare.status == "ok" else None,
-                             "status": compare.status, "reason": compare.reason}},
+        value={"current": {"period": period_key, "value": str(current.value)}, "compare": compare_cell},
         compiled_metric=current,
     )
 
 
 def _metric_breakdown_or_ranking(conn, schema, tenant_id, entity_id, ir: IRRequest, config: ConfigRegistry, tenant_profile: str = "manufacturing") -> AskResult:
+    # Ahead of the dimension check on purpose -- see _refuse_unreportable on
+    # why an unreportable period is the thing to state when both apply.
+    if refused := _refuse_unreportable(conn, schema, tenant_id, entity_id, ir.intent,
+                                            _period_key_from_ir(ir)):
+        return refused
     for dim in ir.breakdown:
         if dim in UNAVAILABLE_DIMENSIONS:
             return AskResult(status="unavailable", intent=ir.intent,
@@ -192,6 +278,9 @@ def _statement_view(conn, schema, tenant_id, entity_id, ir: IRRequest, config: C
     if period_start is None:
         return AskResult(status="unavailable", intent=ir.intent,
                             reason="only single-month statement_view is implemented in this sprint")
+    if refused := _refuse_unreportable(conn, schema, tenant_id, entity_id, ir.intent,
+                                            _period_key_from_ir(ir)):
+        return refused
     try:
         mapping_version_id = resolve_mapping_version_for_period(conn, schema, tenant_id, entity_id, period_end)
     except NoApprovedMappingError as e:
@@ -216,6 +305,17 @@ def _statement_view(conn, schema, tenant_id, entity_id, ir: IRRequest, config: C
 
 
 def _data_health(conn, schema, tenant_id, entity_id, ir: IRRequest, config: ConfigRegistry, tenant_profile: str = "manufacturing") -> AskResult:
+    """corpus/07 section 4: 'Is June reconciled?' -- reads period_lock and
+    reconciliation_run.
+
+    **Deliberately not period-gated.** This intent reports the period's state
+    rather than reporting through it, and it is the answer a user needs
+    precisely when every other intent has just refused them. Gating it would
+    make the system decline to say why it is declining. Nothing here is a
+    financial number computed from facts: it returns the status, the
+    reconciliation runs and the unmapped value -- the same three things the
+    refusal itself states.
+    """
     if ir.period is not None:
         period_key = _period_key_from_ir(ir)
         lock = get_current_period_lock(conn, schema, tenant_id, entity_id, period_key)
@@ -269,6 +369,14 @@ def _variance_explain(conn, schema, tenant_id, entity_id, ir: IRRequest, config:
     y, m = (int(p) for p in period_key.split("-"))
     py, pm = (y, m - 1) if m > 1 else (y - 1, 12)
     prior_key = f"{py:04d}-{pm:02d}"
+
+    # Both periods, and both refuse outright: a bridge is a decomposition of
+    # the movement BETWEEN them, so an unreadable period on either side makes
+    # the whole delta unreportable. There is no half of this answer that is
+    # still true (CLAUDE.md invariant 15).
+    for gated in (period_key, prior_key):
+        if refused := _refuse_unreportable(conn, schema, tenant_id, entity_id, ir.intent, gated):
+            return refused
 
     current = compile_metric(conn, schema, tenant_id, entity_id, ir.metric, period_key, config)
     prior = compile_metric(conn, schema, tenant_id, entity_id, ir.metric, prior_key, config)

@@ -156,6 +156,18 @@ def ask(conn, schema: str, tenant_id: str, entity_id: int, question: str, model_
                                   refusal=build_refusal("ambiguous", f"admission control rejected this query "
                                                                         f"at gate {admission.gate!r}: {admission.reason}"))
 
+    if result.status == "refused":
+        # The one refusal the compiler classifies itself, because it is the
+        # one this layer cannot: corpus/07 section 6's "period not
+        # reportable" needs the reconciliation status and the unmapped rupee
+        # value, which the compiler resolved at the gate. `result` is carried
+        # through so a partially-gated answer (metric_trend's per-month
+        # series) is still visible behind the refusal.
+        _log(conn, tenant_id, entity_id, user_id, role, question, ir.intent, ir_dict, result.sql_text,
+               True, None, result.reason, 0, started, None, None)
+        return AskResponse(status="refused", question=question, intent=ir.intent, ir=ir_dict, result=result,
+                              refusal=result.refusal)
+
     if result.status == "blocked":
         refusal = refusal_for_blocked_decision(ir.metric or "this metric", result.blocking_decisions)
         _log(conn, tenant_id, entity_id, user_id, role, question, ir.intent, ir_dict, result.sql_text,

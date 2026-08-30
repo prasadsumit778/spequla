@@ -18,6 +18,7 @@ from pydantic import BaseModel
 from src.api.deps.auth import Session, require_upload_role
 from src.api.deps.tenant import resolve_tenant
 from src.config.loader import load_registry
+from src.quality.period_gate import PeriodNotReportable
 from src.reports.pack import generate_pack
 from src.reports.query import NoApprovedMappingError
 from src.reports.document import render_html
@@ -74,6 +75,12 @@ def generate_report(body: GenerateRequest, session: Session = Depends(require_up
     try:
         pack = generate_pack(conn, schema, tenant_id, body.entity_id, body.profile, body.period, config,
                                  generated_by=session.user_id)
+    except PeriodNotReportable as e:
+        # corpus/09 section 5: RECONCILED is the state that unlocks "pack may
+        # be generated". Stricter than the statement and overview screens,
+        # which unlock at MAPPED, because a pack is the artefact a human
+        # signs (corpus/08 section 10).
+        raise HTTPException(status_code=422, detail=str(e))
     except NoApprovedMappingError as e:
         raise HTTPException(status_code=422, detail=str(e))
     artefact = write_report_artefact(conn, schema, pack)

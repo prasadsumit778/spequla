@@ -19,14 +19,21 @@ from src.config.loader import load_registry
 from src.quality.checks import ExceptionCandidate, write_exceptions
 from src.reports.pack import generate_pack
 from src.reports.signoff import SignOffBlocked, edit_commentary, render_pack, sign_pack, write_report_artefact
-from tests.helpers import ingest_manufacturer, run_and_freeze_mapping
+from tests.helpers import advance_periods_to_reconciled, ingest_manufacturer, run_and_freeze_mapping
 
 PERIOD_KEY = "2024-06"
 
 
 def _setup(conn, schema, tenant_id, entity_id=1):
+    # corpus/09 section 5: RECONCILED is what unlocks "pack may be
+    # generated", so the fixture takes the reported period there through the
+    # real transitions before asking for a pack.
     ingest_manufacturer(conn, schema, tenant_id, entity_id)
-    run_and_freeze_mapping(conn, schema, tenant_id, entity_id, effective_from=date(2022, 4, 1))
+    version_id, _summary, freeze = run_and_freeze_mapping(conn, schema, tenant_id, entity_id,
+                                                              effective_from=date(2022, 4, 1))
+    reached = advance_periods_to_reconciled(conn, schema, tenant_id, entity_id, version_id, freeze,
+                                                [PERIOD_KEY])
+    assert reached[PERIOD_KEY] == "reconciled", reached
     return load_registry()
 
 

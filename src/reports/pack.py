@@ -27,6 +27,11 @@ from decimal import Decimal
 
 from src.config.loader import ConfigRegistry
 from src.quality.checks import fetch_freshness
+from src.quality.period_gate import (
+    PACK_REPORTABLE,
+    PeriodNotReportable,
+    resolve_period_reportability,
+)
 from src.quality.period_state import get_current_period_lock
 from src.reports.balance_sheet import assemble_balance_sheet
 from src.reports.cashflow import assemble_cash_flow_statement
@@ -341,7 +346,28 @@ def generate_pack(conn, schema: str, tenant_id: str, entity_id: int, profile: st
                       config: ConfigRegistry, generated_by: str) -> dict:
     """Assembles all eight P0 sections + chart specs. Returns a plain dict
     ready for src/reports/signoff.write_report_artefact -- does not write to
-    the DB itself, so it stays unit-testable given a live conn."""
+    the DB itself, so it stays unit-testable given a live conn.
+
+    Raises PeriodNotReportable for a period below RECONCILED, corpus/09
+    section 5's "pack may be generated". The gate is here rather than only in
+    POST /reports/generate because this function IS the pack service: a
+    scheduled run, a backfill or any future caller reaching it directly must
+    hit the same gate the endpoint does.
+
+    **The gate is on `period_key` alone, not on the comparatives.** The pack
+    reports one period; prior month, prior year and year-to-date are context
+    columns beside it, and corpus/09 section 5 grants RECONCILED the right to
+    generate a pack without saying anything about the periods it compares
+    against. Gating those too would make the first twelve months of any
+    dataset permanently unpackageable -- the prior-year column of a company's
+    first year has no period behind it at all. What those columns must never
+    do is present a number as current-period fact, and they do not: they are
+    labelled comparatives throughout section 3.
+    """
+    reportability = resolve_period_reportability(conn, schema, tenant_id, entity_id, period_key, PACK_REPORTABLE)
+    if not reportability.reportable:
+        raise PeriodNotReportable(reportability)
+
     period_start, period_end = period_bounds(period_key)
     mapping_version_id = resolve_mapping_version_for_period(conn, schema, tenant_id, entity_id, period_end)
     with conn.cursor() as cur:

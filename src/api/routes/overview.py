@@ -7,17 +7,25 @@ otherwise; this endpoint returns its block reason (naming the actual
 decision or infrastructural gap) in place of a value, and the frontend
 renders that distinctly from a number. Every tile that DID resolve carries
 its full citation (src/semantic/citation.py), corpus/07 section 8.
+
+Badging is what happens ABOVE the gate, not instead of it. A period below
+MAPPED (corpus/09 section 5, "metrics computable") is refused outright -- no
+tiles, no badge, since there is nothing yet to badge. From MAPPED onward the
+page serves and the period's status rides every citation, which is exactly
+the state corpus/10's GQ-001 names as a failure mode when it goes unbadged
+("uses an unreconciled period without badging"): a MAPPED-but-unreconciled
+period is meant to be shown, and shown as such.
 """
 from __future__ import annotations
 
 from datetime import date
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from src.api.deps.auth import Session, require_role
 from src.api.deps.tenant import resolve_tenant
 from src.config.loader import load_registry
-from src.quality.period_state import get_current_period_lock
+from src.quality.period_gate import STATEMENTS_REPORTABLE, resolve_period_reportability
 from src.reports.query import NoApprovedMappingError, resolve_mapping_version_for_period
 from src.semantic.citation import NotCitable, build_citation
 from src.semantic.compiler import compile_metric
@@ -62,6 +70,11 @@ def get_overview_tiles(
     session: Session = Depends(require_role), tenant_ctx=Depends(resolve_tenant),
 ):
     conn, tenant_id, schema = tenant_ctx
+    reportability = resolve_period_reportability(conn, schema, tenant_id, entity_id, period,
+                                                       STATEMENTS_REPORTABLE)
+    if not reportability.reportable:
+        raise HTTPException(status_code=422, detail=reportability.detail())
+
     config = load_registry()
     period_end = date.fromisoformat(f"{period}-01")
 
@@ -70,8 +83,10 @@ def get_overview_tiles(
     except NoApprovedMappingError as e:
         mapping_version_id = None
 
-    lock = get_current_period_lock(conn, schema, tenant_id, entity_id, period)
-    reconciliation_status = lock.status if lock else "open"
+    # Resolved by the gate above rather than read a second time. This is the
+    # value every tile's citation carries, so a MAPPED-but-unreconciled
+    # period shows its numbers badged with 'mapped'.
+    reconciliation_status = reportability.status
 
     # Shared across every tile in this one request -- dso/dio/dpo's trailing-
     # twelve-months windows (src/semantic/compiler.py's

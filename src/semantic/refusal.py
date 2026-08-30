@@ -47,14 +47,38 @@ def build_refusal(refusal_class: str, reason: str, nearest_supported_question: s
                      nearest_supported_question=nearest_supported_question, clarifying_options=clarifying_options)
 
 
-def refusal_for_unreportable_period(period_key: str, period_status: str, unmapped_value_inr) -> Refusal:
+def refusal_for_unreportable_period(period_key: str, period_status: str, unmapped_value_inr,
+                                       unmapped_value_unavailable_reason: str | None = None) -> Refusal:
     """corpus/07 section 6: 'Period not reportable | Any metric for an
     unreconciled or unmapped period | States the reconciliation status and
-    the unmapped rupee value.'"""
+    the unmapped rupee value.'
+
+    Both figures are required by that row, so the unmapped value is never
+    quietly omitted -- but it is also never invented. Where it is genuinely
+    not computable (no approved mapping version covers the period, so there
+    is no universe to measure suspense.unmapped against), the caller passes
+    None plus the reason and the refusal states that instead of printing a
+    figure. A refusal whose job is to report how much is unmapped must not
+    answer "Rs 0" for a period it is refusing precisely because nothing has
+    been mapped -- see src/quality/period_gate._unmapped_value for how that
+    zero arises and why it is wrong.
+
+    Passing neither is a programming error and raises rather than rendering
+    "Rs None", per CLAUDE.md section 8's "no default values that mask a
+    missing input".
+    """
+    if unmapped_value_inr is not None:
+        unmapped = f"unmapped value is Rs {unmapped_value_inr}"
+    elif unmapped_value_unavailable_reason:
+        unmapped = f"the unmapped rupee value is not computable: {unmapped_value_unavailable_reason}"
+    else:
+        raise ValueError(
+            "refusal_for_unreportable_period needs either an unmapped rupee value or a stated reason "
+            "there is none -- corpus/07 section 6 requires this refusal class to report that figure"
+        )
     return build_refusal(
         "period_not_reportable",
-        f"{period_key} is not reportable: status is {period_status!r}, unmapped value is "
-        f"Rs {unmapped_value_inr}.",
+        f"{period_key} is not reportable: status is {period_status!r}, {unmapped}.",
         nearest_supported_question=f"Is {period_key} reconciled?",
     )
 

@@ -3,6 +3,12 @@
 operating layer (corpus/03 section 6). Separate from statements.py's
 P&L/balance-sheet endpoints because these read fact_channel_order_line /
 fact_production_output directly, not just fact_gl_entry.
+
+Both refuse a period below MAPPED, the same gate statements.py applies and
+for the same corpus/09 section 5 reason. Reading a different fact table does
+not make a period any more readable: the CM ladder reconciles to the books
+through order_file_to_books_residual, and the manufacturing operating layer
+divides GL cost by production volume -- both put a ledger number on screen.
 """
 from __future__ import annotations
 
@@ -13,6 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from src.api.deps.auth import Session, require_role
 from src.api.deps.tenant import resolve_tenant
 from src.quality.checks import check_mixed_uom
+from src.quality.period_gate import STATEMENTS_REPORTABLE, first_unreportable, months_in_range
 from src.reports.consumer_ladder import assemble_consumer_ladder, assemble_order_file_to_books_residual
 from src.reports.manufacturing_operating import assemble_manufacturing_operating_metrics
 from src.reports.query import NoApprovedMappingError, resolve_mapping_version_for_period
@@ -27,6 +34,11 @@ def get_consumer_ladder(
     session: Session = Depends(require_role), tenant_ctx=Depends(resolve_tenant),
 ):
     conn, tenant_id, schema = tenant_ctx
+    unreportable = first_unreportable(conn, schema, tenant_id, entity_id,
+                                          months_in_range(period_start, period_end), STATEMENTS_REPORTABLE)
+    if unreportable is not None:
+        raise HTTPException(status_code=422, detail=unreportable.detail())
+
     try:
         mapping_version_id = resolve_mapping_version_for_period(conn, schema, tenant_id, entity_id, period_end)
     except NoApprovedMappingError as e:
@@ -65,6 +77,10 @@ def get_manufacturing_operating(
 ):
     conn, tenant_id, schema = tenant_ctx
     period_start, period_end = period_bounds(period)
+    unreportable = first_unreportable(conn, schema, tenant_id, entity_id, [period], STATEMENTS_REPORTABLE)
+    if unreportable is not None:
+        raise HTTPException(status_code=422, detail=unreportable.detail())
+
     try:
         mapping_version_id = resolve_mapping_version_for_period(conn, schema, tenant_id, entity_id, period_end)
     except NoApprovedMappingError as e:

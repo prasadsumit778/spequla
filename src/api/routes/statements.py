@@ -4,6 +4,11 @@
 company profile (manufacturing vs consumer) setup is corpus/02's onboarding
 flow, which sprint 2 does not build; the caller (the frontend, which already
 knows which company it's looking at) supplies it.
+
+Both endpoints refuse a period that has not reached MAPPED, corpus/09
+section 5's "metrics computable, statements assemble" -- the gate lives here
+rather than inside assemble_pnl/assemble_balance_sheet, which stay pure
+assembly. See src/quality/period_gate.py.
 """
 from __future__ import annotations
 
@@ -13,6 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from src.api.deps.auth import Session, require_role
 from src.api.deps.tenant import resolve_tenant
+from src.quality.period_gate import STATEMENTS_REPORTABLE, first_unreportable, months_in_range
 from src.reports.balance_sheet import assemble_balance_sheet
 from src.reports.pnl import assemble_consumer_cm_ladder, assemble_manufacturing_pnl
 from src.reports.query import NoApprovedMappingError, resolve_mapping_version_for_period
@@ -28,6 +34,13 @@ def get_pnl(
     session: Session = Depends(require_role), tenant_ctx=Depends(resolve_tenant),
 ):
     conn, tenant_id, schema = tenant_ctx
+    # Every month the range touches, not just its ends: a P&L is one set of
+    # totals and an unmapped month inside it would disappear into them.
+    unreportable = first_unreportable(conn, schema, tenant_id, entity_id,
+                                          months_in_range(period_start, period_end), STATEMENTS_REPORTABLE)
+    if unreportable is not None:
+        raise HTTPException(status_code=422, detail=unreportable.detail())
+
     try:
         mapping_version_id = resolve_mapping_version_for_period(conn, schema, tenant_id, entity_id, period_end)
     except NoApprovedMappingError as e:
@@ -55,6 +68,11 @@ def get_balance_sheet(
     session: Session = Depends(require_role), tenant_ctx=Depends(resolve_tenant),
 ):
     conn, tenant_id, schema = tenant_ctx
+    unreportable = first_unreportable(conn, schema, tenant_id, entity_id,
+                                          [f"{as_of.year:04d}-{as_of.month:02d}"], STATEMENTS_REPORTABLE)
+    if unreportable is not None:
+        raise HTTPException(status_code=422, detail=unreportable.detail())
+
     try:
         mapping_version_id = resolve_mapping_version_for_period(conn, schema, tenant_id, entity_id, as_of)
     except NoApprovedMappingError as e:

@@ -18,14 +18,18 @@ from src.config.loader import load_registry
 from src.reports.edits import PackEdits, edits_by_period, pack_edits
 from src.reports.pack import generate_pack
 from src.reports.signoff import edit_commentary, sign_pack, write_report_artefact
-from tests.helpers import ingest_manufacturer, run_and_freeze_mapping
+from tests.helpers import advance_periods_to_reconciled, ingest_manufacturer, run_and_freeze_mapping
 
 PERIOD_KEY = "2025-03"
 
 
 def _setup(conn, schema, tenant_id):
+    # RECONCILED, per corpus/09 section 5's "pack may be generated" -- the
+    # same precondition generate_pack now enforces for every caller.
     ingest_manufacturer(conn, schema, tenant_id, 1)
-    run_and_freeze_mapping(conn, schema, tenant_id, 1, date(2022, 4, 1))
+    version_id, _summary, freeze = run_and_freeze_mapping(conn, schema, tenant_id, 1, date(2022, 4, 1))
+    reached = advance_periods_to_reconciled(conn, schema, tenant_id, 1, version_id, freeze, [PERIOD_KEY])
+    assert reached[PERIOD_KEY] == "reconciled", reached
     return load_registry()
 
 
