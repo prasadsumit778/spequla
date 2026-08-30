@@ -3,7 +3,7 @@
 Implements corpus/04 section 5:
   source file -> source_file (hash, immutable landing) -> load_run ->
   staging (typed, dedup) -> canonical facts (close-not-update) ->
-  quality checks (blocking ones halt) -> [period status is sprint 3]
+  quality checks (blocking ones halt) -> period state (OPEN -> VALIDATED)
 
 Two blocking checks are wired in sprint 1, at two different points, because
 they block two different things (corpus/09 section 2):
@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from datetime import date
 
 from src.ingest.canonical import (
+    get_placeholder_mapping_version,
     write_bank_rows,
     write_channel_order_rows,
     write_coa_rows,
@@ -39,6 +40,12 @@ from src.ingest.staging import (
     stage_store_master,
     stage_tb,
 )
+from src.quality.exception_queue import open_blocking_exceptions
+from src.quality.period_state import (
+    PeriodTransitionOutcome,
+    get_current_period_lock,
+    validate_period,
+)
 from src.quality.trial_balance import TrialBalanceCheckResult, check_trial_balance
 
 
@@ -53,6 +60,11 @@ class LoadResult:
     unchanged: int = 0
     periods_touched: list[str] = field(default_factory=list)
     tb_results: list[TrialBalanceCheckResult] = field(default_factory=list)
+    # One entry per period in periods_touched, for GL loads only -- what the
+    # OPEN -> VALIDATED attempt did, including the periods it deliberately
+    # did not move. Empty for every other stream: a period becomes reportable
+    # on its GL, not on a bank file or an order file.
+    period_transitions: list[PeriodTransitionOutcome] = field(default_factory=list)
 
 
 def _create_load_run(conn, tenant_id: str, entity_id: int, source_system: str, triggered_by: str) -> int:
@@ -94,6 +106,81 @@ def _record_source_file(conn, tenant_id: str, entity_id: int, load_run_id: int, 
         )
 
 
+def _validate_loaded_periods(conn, schema: str, tenant_id: str, entity_id: int,
+                                 periods: list[str]) -> list[PeriodTransitionOutcome]:
+    """OPEN -> VALIDATED once per period a GL load touched, corpus/09 section
+    5: "all blocking checks pass."
+
+    **What counts as a blocking check here.** The condition is evaluated
+    against the exception queue -- src/quality/exception_queue.
+    open_blocking_exceptions, the same query corpus/08 section 10's sign-off
+    gate uses, so "a blocking exception is open for this period" has one
+    meaning in this system rather than two that drift. That query returns
+    zero for every period today: nothing in the production path calls
+    src/quality/checks.write_exceptions, so no exception row is ever raised
+    and this gate currently admits every period whose predecessor state
+    allows it. It is wired against the real query now so it starts blocking
+    the moment a writer exists rather than being remembered later -- but
+    until then it is a live wire carrying no current, and reading this as
+    though the check catalogue were enforced would be wrong.
+
+    The trial balance check that ran moments earlier in load_gl_file is
+    deliberately NOT folded in on the side. corpus/09 section 2.4 catalogues
+    a trial balance imbalance as blocking, so it will arrive here through the
+    queue like every other blocking check once the catalogue writes to it;
+    counting it separately now would build a second path to the same
+    condition, which is the drift open_blocking_exceptions was just
+    consolidated to prevent. Until then a period whose trial balance does not
+    tie does reach VALIDATED. Nothing renders off that today: MAPPED ->
+    RECONCILED computes the trial balance itself and refuses on any non-zero
+    total (D-051), and no read path consults period status.
+
+    **An already-validated period is skipped, not refused** -- OQ-009(a),
+    resolved 2026-08-30. corpus/09 section 5 draws no self-arrow, so
+    validate_period refuses a period that already holds a lock row, while a
+    second GL file for the same month is ordinary usage rather than an error.
+    The skip is recorded and returned instead of raised, and its cost is real
+    and knowingly accepted: the blocking checks do not re-run, so such a
+    period keeps a `validated` row that was earned against facts which have
+    since changed. A LOCKED period touched by new data is corpus/09 section
+    5's restatement path (LOCKED -> RESTATED, src/ingest/repull.py), not
+    wired yet -- it is skipped and reported here like any other occupied
+    state, never walked backwards.
+    """
+    # period_lock.mapping_version_id is NOT NULL, and at VALIDATED there is by
+    # definition no frozen version to point at -- corpus/09 section 5 calls
+    # this state "structurally sound, mapping not yet frozen." The placeholder
+    # (version_no = 0, db/migrations/tenant/0005) is exactly what the facts
+    # this load just wrote already carry (src/ingest/canonical.write_gl_rows),
+    # so the lock row records the same ingestion-time version its own facts
+    # do, rather than one chosen here. map_period supersedes it with the real
+    # frozen version at the next transition.
+    mapping_version_id = get_placeholder_mapping_version(conn, schema, tenant_id, entity_id)
+
+    outcomes: list[PeriodTransitionOutcome] = []
+    for period_key in periods:
+        current = get_current_period_lock(conn, schema, tenant_id, entity_id, period_key)
+        if current is not None:
+            outcomes.append(PeriodTransitionOutcome(
+                period_key, False, current.status,
+                f"already {current.status} before this load: the transition was skipped and the blocking "
+                f"checks did not re-run against the facts this load wrote (OQ-009(a))",
+            ))
+            continue
+        blocking_exception_count = len(open_blocking_exceptions(conn, schema, tenant_id, entity_id, period_key))
+        if blocking_exception_count > 0:
+            outcomes.append(PeriodTransitionOutcome(
+                period_key, False, "open",
+                f"held at open: {blocking_exception_count} blocking exception(s) open for this period -- "
+                f"corpus/09 section 5 requires all blocking checks to pass before VALIDATED",
+            ))
+            continue
+        validate_period(conn, schema, tenant_id, entity_id, period_key, mapping_version_id,
+                           blocking_exception_count=blocking_exception_count)
+        outcomes.append(PeriodTransitionOutcome(period_key, True, "validated", "open -> validated"))
+    return outcomes
+
+
 def load_gl_file(conn, schema: str, tenant_id: str, entity_id: int, file_name: str, raw_bytes: bytes,
                    triggered_by: str, today: date | None = None) -> LoadResult:
     result = LoadResult()
@@ -127,6 +214,8 @@ def load_gl_file(conn, schema: str, tenant_id: str, entity_id: int, file_name: s
     result.periods_touched = periods
     for period_key in periods:
         result.tb_results.append(check_trial_balance(conn, schema, tenant_id, period_key))
+
+    result.period_transitions = _validate_loaded_periods(conn, schema, tenant_id, entity_id, periods)
 
     result.status = "succeeded"
     _finish_load_run(conn, load_run_id, "succeeded")

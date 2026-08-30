@@ -130,6 +130,33 @@ def run_books_to_bank(conn, schema: str, tenant_id: str, entity_id: int, mapping
     return compute_reconciliation(period_key, books_total, bank_total, modelled_differences)
 
 
+def latest_reconciliation_run_id(conn, schema: str, tenant_id: str, entity_id: int, period_key: str,
+                                     check_type: str = "books_to_bank") -> int | None:
+    """The most recent reconciliation_run of `check_type` for this period, or
+    None if none has been run.
+
+    corpus/09 section 5's MAPPED -> RECONCILED condition needs to know that
+    the reconciliation HAS been run for the period (see this module's
+    docstring point 2 for why "and came out within tolerance" is not
+    evaluable while D-052 is unset). This finds it from the table rather
+    than taking a run id from whoever is asking, so a period cannot be
+    reconciled against a run that belongs to a different period, a different
+    entity, or nothing at all.
+
+    Ordered by run_at then reconciliation_run_id: run_at defaults to now()
+    at insert, and two runs inside the same transaction can share a
+    timestamp, so the surrogate key breaks the tie deterministically."""
+    with conn.cursor() as cur:
+        cur.execute(
+            f'SELECT reconciliation_run_id FROM "{schema}".reconciliation_run '
+            f'WHERE tenant_id = %s AND entity_id = %s AND period_key = %s AND check_type = %s '
+            f'ORDER BY run_at DESC, reconciliation_run_id DESC LIMIT 1',
+            (tenant_id, entity_id, period_key, check_type),
+        )
+        row = cur.fetchone()
+    return row[0] if row else None
+
+
 def write_reconciliation_run(conn, schema: str, tenant_id: str, entity_id: int, mapping_version_id: int,
                                 check_type: str, result: ReconciliationResult, run_by: str,
                                 tolerance_pct: Decimal | None = None) -> int:

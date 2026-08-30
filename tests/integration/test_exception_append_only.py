@@ -107,10 +107,12 @@ def test_current_status_is_derived_and_the_queue_reflects_it(conn, tenant):
 
 def test_a_resolved_blocking_exception_stops_blocking_signoff(conn, tenant):
     """The reader that would have broken loudest if it kept querying the base
-    table: signoff.open_blocking_exceptions. The raised row's status stays
-    'open' forever, so reading it directly would block sign-off for the
-    period permanently, with no way back short of an UPDATE."""
-    from src.reports.signoff import open_blocking_exceptions
+    table: exception_queue.open_blocking_exceptions, which now gates both
+    corpus/08 section 10's sign-off and corpus/09 section 5's OPEN ->
+    VALIDATED. The raised row's status stays 'open' forever, so reading it
+    directly would block sign-off -- and now a period's validation -- for
+    that period permanently, with no way back short of an UPDATE."""
+    from src.quality.exception_queue import open_blocking_exceptions
 
     tenant_id, schema = tenant
     exception_id = _raise_one(conn, schema, tenant_id, severity="blocking", value=D("50000.00"))

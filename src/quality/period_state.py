@@ -46,13 +46,28 @@ case, "if a locked period becomes unreconciled because new data arrived,"
 covers LOCKED and only LOCKED; it says nothing about a VALIDATED or MAPPED
 period going bad). Each fails loudly with the current status named, per
 CLAUDE.md section 3.1. A caller that hits one has found a real question about
-the state machine, and that is an escalation, not a branch to add here.
+the state machine, and that is an escalation, not a branch to add here. The
+first of those three was escalated as OQ-009 and resolved for the load path
+only: `src/ingest/load_pipeline.load_gl_file` skips and reports the
+transition when a period already has a lock row rather than re-validating it.
+That is a decision about what a caller does with the refusal. The refusal
+itself is unchanged, and there is still no self-arrow here.
+
+The five single-period transitions take their preconditions as arguments so
+each stays a precondition check that is testable without a database. The
+three functions at the bottom of this module are the callers that batch and
+orchestrate them -- advancing every period a frozen mapping version governs,
+and computing (rather than accepting) the trial balance and reconciliation
+run a period is reconciled on.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from decimal import Decimal
+
+from src.quality.books_to_bank import latest_reconciliation_run_id
+from src.quality.trial_balance import check_trial_balance
 
 STATES = ("open", "validated", "mapped", "reconciled", "locked", "restated")
 
@@ -92,6 +107,38 @@ class PeriodLockRow:
     locked_at: datetime | None = None
     restated_from: int | None = None
     restatement_reason: str | None = None
+
+
+@dataclass
+class PeriodTransitionOutcome:
+    """What happened to ONE period when a caller advanced several at once --
+    a GL load taking every period it touched to VALIDATED, a mapping freeze
+    taking every period it governs to MAPPED.
+
+    Those callers cannot raise on the first refusal: a load of thirty-six
+    months where month eight is refused still wrote thirty-six months of
+    facts, and the other thirty-five periods still transitioned. So the
+    refusal becomes a reported outcome per period instead of an exception,
+    and every caller surfaces the list rather than counting successes.
+    `status` is the period's status AFTER the attempt: the state it reached
+    when transitioned is True, the state that was already there when it is
+    not."""
+    period_key: str
+    transitioned: bool
+    status: str
+    detail: str
+
+
+@dataclass
+class ReconciledPeriod:
+    """What reconcile_period_from_current_checks actually decided on, handed
+    back so the caller reports the figures the transition was made against
+    rather than re-deriving them afterwards. The residual is not in here on
+    purpose: it belongs to the reconciliation_run row, which is never
+    superseded or cleared by the period being reconciled."""
+    lock_id: int
+    trial_balance_total: Decimal
+    reconciliation_run_id: int
 
 
 def get_current_period_lock(conn, schema: str, tenant_id: str, entity_id: int, period_key: str) -> PeriodLockRow | None:
@@ -234,3 +281,117 @@ def restate_period(conn, schema: str, tenant_id: str, entity_id: int, period_key
     current = _require_predecessor(conn, schema, tenant_id, entity_id, period_key, "restated")
     return _insert(conn, schema, tenant_id, entity_id, period_key, "restated", mapping_version_id,
                      restated_from=current.lock_id, restatement_reason=restatement_reason)
+
+
+def _periods_with_facts_in_range(conn, schema: str, tenant_id: str, entity_id: int,
+                                     date_from: date, date_to: date) -> list[str]:
+    """Distinct period_key of current GL facts with event_date in
+    [date_from, date_to) -- half-open, matching corpus/06 section 6 rule 3's
+    effective dating ("a version effective from 1 April 2026 applies to April
+    onwards; March renders with the prior version forever")."""
+    with conn.cursor() as cur:
+        cur.execute(
+            f'SELECT DISTINCT period_key FROM "{schema}".fact_gl_entry '
+            f'WHERE tenant_id = %s AND entity_id = %s AND is_current '
+            f'AND event_date >= %s AND event_date < %s ORDER BY period_key',
+            (tenant_id, entity_id, date_from, date_to),
+        )
+        return [r[0] for r in cur.fetchall()]
+
+
+def map_periods_for_mapping_version(conn, schema: str, tenant_id: str, entity_id: int,
+                                        mapping_version_id: int, freeze_passed: bool,
+                                        coverage_pct: Decimal) -> list[PeriodTransitionOutcome]:
+    """VALIDATED -> MAPPED for every period this frozen mapping version
+    governs. Called from POST /mapping/runs/{id}/freeze once
+    freeze_mapping_version has passed -- corpus/09 section 5's condition on
+    this arrow is "mapping version approved, coverage above threshold," which
+    is precisely the event that just happened.
+
+    Which periods the version governs is read from the data, not supplied:
+    the periods with current GL facts inside the version's own
+    [effective_from, effective_to) window, per corpus/06 section 6 rule 3. A
+    caller cannot name a period the version does not cover.
+
+    **A period that is not currently VALIDATED is skipped and reported, never
+    dragged forward.** A period still at OPEN did not pass its blocking
+    checks, or has never had a load complete for it; approving a mapping
+    version says nothing whatsoever about whether that period is
+    structurally sound, and corpus/09 section 5's arrow into MAPPED starts
+    at VALIDATED and nowhere else. The same applies at the other end: a
+    period already RECONCILED or LOCKED is left where it is rather than
+    walked backwards, which section 5 forbids outright.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            f'SELECT effective_from, effective_to FROM "{schema}".mapping_version '
+            f'WHERE mapping_version_id = %s AND tenant_id = %s AND entity_id = %s',
+            (mapping_version_id, tenant_id, entity_id),
+        )
+        row = cur.fetchone()
+    if row is None:
+        raise InvalidTransition(f"no mapping_version {mapping_version_id} for entity {entity_id}")
+    effective_from, effective_to = row
+
+    outcomes: list[PeriodTransitionOutcome] = []
+    for period_key in _periods_with_facts_in_range(conn, schema, tenant_id, entity_id,
+                                                       effective_from, effective_to):
+        current = get_current_period_lock(conn, schema, tenant_id, entity_id, period_key)
+        status = current.status if current is not None else "open"
+        if status != "validated":
+            outcomes.append(PeriodTransitionOutcome(
+                period_key, False, status,
+                f"left at {status}: corpus/09 section 5 admits validated -> mapped and no other path "
+                f"into mapped, so freezing a mapping version does not move this period",
+            ))
+            continue
+        map_period(conn, schema, tenant_id, entity_id, period_key, mapping_version_id,
+                     freeze_passed=freeze_passed, coverage_pct=coverage_pct)
+        outcomes.append(PeriodTransitionOutcome(
+            period_key, True, "mapped",
+            f"validated -> mapped on mapping version {mapping_version_id}",
+        ))
+    return outcomes
+
+
+def reconcile_period_from_current_checks(conn, schema: str, tenant_id: str, entity_id: int,
+                                             period_key: str, approved_by: str) -> ReconciledPeriod:
+    """MAPPED -> RECONCILED with both of reconcile_period's data preconditions
+    computed here rather than asserted by whoever is asking.
+
+    reconcile_period takes `trial_balance_balanced` and
+    `reconciliation_run_id` as arguments, which is right for the function --
+    it keeps it a precondition check that is unit-testable without a
+    database, per this module's docstring. It is wrong for an API: a caller
+    that can pass trial_balance_balanced=True can reconcile a period whose
+    trial balance does not tie, and D-051's zero tolerance would then be
+    enforced against a claim instead of against the ledger. So this runs
+    check_trial_balance itself and finds the period's own latest
+    books_to_bank reconciliation_run. Nothing about the period's condition
+    arrives from outside.
+
+    The mapping version is carried forward from the period's current lock
+    row for the same reason -- the period continues under the version it was
+    mapped on, not one named in a request body.
+    """
+    current = _require_predecessor(conn, schema, tenant_id, entity_id, period_key, "reconciled")
+    tb = check_trial_balance(conn, schema, tenant_id, period_key)
+    run_id = latest_reconciliation_run_id(conn, schema, tenant_id, entity_id, period_key, "books_to_bank")
+    # reconcile_period re-checks the predecessor. That is deliberate: it stays
+    # correct on its own, called from here or from anywhere else.
+    lock_id = reconcile_period(conn, schema, tenant_id, entity_id, period_key, current.mapping_version_id,
+                                   trial_balance_balanced=tb.balanced, reconciliation_run_id=run_id,
+                                   approved_by=approved_by)
+    return ReconciledPeriod(lock_id=lock_id, trial_balance_total=tb.total, reconciliation_run_id=run_id)
+
+
+def lock_period_from_current_state(conn, schema: str, tenant_id: str, entity_id: int, period_key: str,
+                                       locked_by: str) -> int:
+    """RECONCILED -> LOCKED, carrying the mapping version forward off the
+    period's own lock row rather than taking one from the caller -- same
+    reason as reconcile_period_from_current_checks. snapshot_at, the
+    timestamp every future report for this period renders against, is pinned
+    by lock_period itself."""
+    current = _require_predecessor(conn, schema, tenant_id, entity_id, period_key, "locked")
+    return lock_period(conn, schema, tenant_id, entity_id, period_key, current.mapping_version_id,
+                          locked_by=locked_by)

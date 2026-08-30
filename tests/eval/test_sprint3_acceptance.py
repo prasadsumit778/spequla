@@ -21,7 +21,7 @@ from datetime import date
 
 from src.config.loader import load_registry
 from src.quality.books_to_bank import run_books_to_bank, write_reconciliation_run
-from src.quality.period_state import get_current_period_lock, map_period, reconcile_period, validate_period
+from src.quality.period_state import get_current_period_lock, map_period, reconcile_period
 from src.quality.trial_balance import check_trial_balance
 from src.semantic.citation import NotCitable, build_citation
 from src.semantic.compiler import compile_metric
@@ -40,7 +40,10 @@ def test_period_reaches_reconciled_with_a_visible_residual(conn, tenant):
     assert freeze.passed, freeze.reason
     period_key = "2025-03"
 
-    validate_period(conn, schema, tenant_id, entity_id, period_key, version_id, blocking_exception_count=0)
+    # OPEN -> VALIDATED happened at the end of the GL load for this period
+    # (src/ingest/load_pipeline._validate_loaded_periods); re-validating would
+    # be refused, corpus/09 section 5 draws no self-arrow.
+    assert get_current_period_lock(conn, schema, tenant_id, entity_id, period_key).status == "validated"
     map_period(conn, schema, tenant_id, entity_id, period_key, version_id,
                  freeze_passed=freeze.passed, coverage_pct=freeze.coverage_pct)
 

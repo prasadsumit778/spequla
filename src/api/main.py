@@ -6,7 +6,11 @@ unconfigured by explicit instruction until a vendor decision is made;
 everything downstream of a valid IR is real and live. Sprint 5: the monthly
 management pack -- generate, review, edit commentary, sign, export.
 Forecasting build (corpus/13, 2026-08-24): scenario save/list/run for the
-apparel/retail profile's driver-based operating forecast."""
+apparel/retail profile's driver-based operating forecast. corpus/09 section
+5's period state machine is wired end to end: a GL load validates the periods
+it touched, freezing a mapping version maps the periods it governs, and
+/periods/{period}/reconcile and /periods/{period}/lock are the two
+transitions a named human performs."""
 from __future__ import annotations
 
 import os
@@ -14,7 +18,8 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.api.routes import admin, ask, data_health, exceptions, forecast, load_runs, mapping, operating, overview, reports, statements, upload
+from src.api.routes import (admin, ask, data_health, exceptions, forecast, load_runs, mapping, operating,
+                              overview, periods, reports, statements, upload)
 
 app = FastAPI(title="SPEQULA API", version="0.7.0")
 
@@ -45,6 +50,7 @@ app.include_router(ask.router, tags=["ask"])
 app.include_router(reports.router, tags=["reports"])
 app.include_router(operating.router, tags=["operating"])
 app.include_router(forecast.router, tags=["forecast"])
+app.include_router(periods.router, tags=["periods"])
 app.include_router(admin.router, tags=["admin"])
 
 

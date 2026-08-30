@@ -22,11 +22,11 @@ from src.reports.pack import generate_pack
 from src.reports.query import NoApprovedMappingError
 from src.reports.document import render_html
 from src.reports.edits import edits_by_period
+from src.quality.exception_queue import open_blocking_exceptions
 from src.reports.signoff import (
     SignOffBlocked,
     edit_commentary,
     get_report_artefact,
-    open_blocking_exceptions,
     render_pack,
     sign_pack,
     write_report_artefact,

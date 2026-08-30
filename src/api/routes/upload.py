@@ -89,4 +89,13 @@ async def upload_file(
             {"period_key": r.period_key, "balanced": r.balanced, "total": str(r.total)}
             for r in result.tb_results
         ],
+        # corpus/09 section 5's OPEN -> VALIDATED, per period, including the
+        # periods the load deliberately did not move -- a re-upload of a month
+        # that is already validated is skipped (OQ-009(a)) and says so here
+        # rather than looking identical to a first upload.
+        "period_transitions": [
+            {"period_key": t.period_key, "transitioned": t.transitioned, "status": t.status,
+              "detail": t.detail}
+            for t in result.period_transitions
+        ],
     }

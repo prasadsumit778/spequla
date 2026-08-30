@@ -15,8 +15,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+# open_blocking_exceptions lives in src/quality/exception_queue.py, next to
+# the queue it reads: corpus/08 section 10's sign-off gate and corpus/09
+# section 5's OPEN -> VALIDATED condition are two callers of one query, not
+# two queries that happen to agree today. Re-exported here because this
+# module's own callers (src/api/routes/reports.py) have always reached it
+# through sign-off.
+from src.quality.exception_queue import open_blocking_exceptions
 from src.reports.edits import record_commentary_edit
 from src.reports.pack import content_hash
+
+__all__ = ["ReportArtefact", "SignOffBlocked", "edit_commentary", "get_report_artefact",
+           "open_blocking_exceptions", "render_pack", "sign_pack", "write_report_artefact"]
 
 
 class SignOffBlocked(Exception):
@@ -131,24 +141,6 @@ def edit_commentary(conn, schema: str, report_artefact_id: int, commentary: str,
     )
     conn.commit()
     return _row_to_artefact(row)
-
-
-def open_blocking_exceptions(conn, schema: str, tenant_id: str, entity_id: int, period_key: str) -> list[dict]:
-    """Reads exception_current, not exception. Resolving an exception appends
-    a new version rather than updating the raised row (CLAUDE.md invariant #4,
-    db/migrations/tenant/0024), so the raised row keeps status='open'
-    forever -- querying the base table here would leave a resolved blocking
-    exception blocking sign-off permanently. exception_id in the returned
-    dicts is the stable identity, the same one the queue quotes."""
-    with conn.cursor() as cur:
-        cur.execute(
-            f'SELECT exception_key, exception_class, description, value_inr FROM "{schema}".exception_current '
-            f"WHERE tenant_id = %s AND entity_id = %s AND period_key = %s AND status = 'open' "
-            f"AND severity = 'blocking'",
-            (tenant_id, entity_id, period_key),
-        )
-        return [{"exception_id": i, "exception_class": c, "description": d, "value_inr": v}
-                  for i, c, d, v in cur.fetchall()]
 
 
 def sign_pack(conn, schema: str, report_artefact_id: int, reviewer: str,

@@ -22,12 +22,18 @@ from tests.helpers import ingest_manufacturer, run_and_freeze_mapping
 
 
 def _advance_to_mapped(conn, schema, tenant_id, entity_id, period_key, version_id, freeze):
-    """OPEN -> VALIDATED -> MAPPED.
+    """... -> MAPPED, from wherever the GL load left the period.
 
     A test about a later transition's OWN precondition has to start from that
     transition's predecessor state, or the predecessor check satisfies it
-    first and the test passes without exercising what it names."""
-    validate_period(conn, schema, tenant_id, entity_id, period_key, version_id, blocking_exception_count=0)
+    first and the test passes without exercising what it names.
+
+    OPEN -> VALIDATED is not performed here any more: loading the GL does it
+    (src/ingest/load_pipeline._validate_loaded_periods), so calling
+    validate_period again would be refused -- corpus/09 section 5 draws no
+    self-arrow. Asserted rather than assumed, so this helper fails where the
+    wiring broke instead of somewhere downstream."""
+    assert get_current_period_lock(conn, schema, tenant_id, entity_id, period_key).status == "validated"
     map_period(conn, schema, tenant_id, entity_id, period_key, version_id,
                  freeze_passed=freeze.passed, coverage_pct=freeze.coverage_pct)
 
@@ -55,7 +61,9 @@ def test_full_state_machine_open_to_locked_to_restated(conn, tenant):
 
     period_key = "2025-03"
 
-    validate_period(conn, schema, tenant_id, entity_id, period_key, version_id, blocking_exception_count=0)
+    # OPEN -> VALIDATED already happened, at the end of the GL load that wrote
+    # this period's facts -- corpus/09 section 5's "all blocking checks pass"
+    # is evaluated where the data arrives, not by a later caller asserting it.
     assert get_current_period_lock(conn, schema, tenant_id, entity_id, period_key).status == "validated"
 
     map_period(conn, schema, tenant_id, entity_id, period_key, version_id,
@@ -114,7 +122,10 @@ def test_restate_blocked_unless_currently_locked(conn, tenant):
     ingest_manufacturer(conn, schema, tenant_id, entity_id)
     version_id, _summary, _freeze = run_and_freeze_mapping(conn, schema, tenant_id, entity_id,
                                                                effective_from=date(2022, 4, 1))
-    with pytest.raises(InvalidTransition, match="is open, not locked"):
+    # Validated, because the GL load that wrote this period's facts took it
+    # there -- the state named in the refusal is whatever the period is
+    # actually in, which is the point of the message.
+    with pytest.raises(InvalidTransition, match="is validated, not locked"):
         restate_period(conn, schema, tenant_id, entity_id, "2025-03", version_id, restatement_reason="test")
 
 
@@ -129,9 +140,11 @@ def test_a_transition_refuses_when_its_predecessor_state_was_skipped(conn, tenan
     period_key = "2025-03"
 
     # MAPPED is reachable only from VALIDATED, never straight from OPEN --
-    # even with a freeze that genuinely passed.
+    # even with a freeze that genuinely passed. "2027-01" is outside the
+    # synthetic company's 36 months, so no GL load has touched it and it is
+    # genuinely OPEN; every period that WAS loaded is validated by now.
     with pytest.raises(InvalidTransition, match="is open, not validated"):
-        map_period(conn, schema, tenant_id, entity_id, period_key, version_id,
+        map_period(conn, schema, tenant_id, entity_id, "2027-01", version_id,
                      freeze_passed=freeze.passed, coverage_pct=freeze.coverage_pct)
 
     # LOCKED is reachable only from RECONCILED, never straight from MAPPED --
@@ -143,10 +156,13 @@ def test_a_transition_refuses_when_its_predecessor_state_was_skipped(conn, tenan
 
 def test_a_transition_refuses_on_a_period_already_in_that_state(conn, tenant):
     """corpus/09 section 5 draws no self-arrow on any state, so re-running a
-    transition is refused rather than silently treated as idempotent. Whether
-    a second GL load should be able to re-validate an already-validated period
-    is a real question the corpus does not answer -- it fails loudly here
-    instead of being answered in this module (see its docstring)."""
+    transition is refused rather than silently treated as idempotent.
+
+    OQ-009 resolved what a GL LOAD does with that refusal -- option (a), skip
+    and report (src/ingest/load_pipeline._validate_loaded_periods). It did not
+    change the state machine: validate_period still refuses, which is what
+    this asserts. If the refusal ever softens into a second `validated` row,
+    the load path's skip becomes a silent no-op instead of a recorded one."""
     tenant_id, schema = tenant
     entity_id = 1
     ingest_manufacturer(conn, schema, tenant_id, entity_id)
@@ -154,7 +170,7 @@ def test_a_transition_refuses_on_a_period_already_in_that_state(conn, tenant):
                                                                effective_from=date(2022, 4, 1))
     period_key = "2025-03"
 
-    validate_period(conn, schema, tenant_id, entity_id, period_key, version_id, blocking_exception_count=0)
+    assert get_current_period_lock(conn, schema, tenant_id, entity_id, period_key).status == "validated"
     with pytest.raises(InvalidTransition, match="is validated, not open"):
         validate_period(conn, schema, tenant_id, entity_id, period_key, version_id, blocking_exception_count=0)
 

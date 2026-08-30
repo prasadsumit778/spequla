@@ -115,6 +115,37 @@ def list_exceptions(conn, schema: str, tenant_id: str, status: str) -> list[Exce
         return [ExceptionRow(*r) for r in cur.fetchall()]
 
 
+def open_blocking_exceptions(conn, schema: str, tenant_id: str, entity_id: int, period_key: str) -> list[dict]:
+    """Every open BLOCKING exception for one period.
+
+    One query with two callers, deliberately: corpus/08 section 10's sign-off
+    gate ("a pack cannot be signed while a blocking exception is open for the
+    period", src/reports/signoff.sign_pack) and corpus/09 section 5's
+    OPEN -> VALIDATED condition ("all blocking checks pass",
+    src/quality/period_state.validate_period, called from
+    src/ingest/load_pipeline.load_gl_file). Two definitions of "a blocking
+    exception is open" that could drift apart is exactly the shape of defect
+    this system exists to prevent, so there is only one.
+
+    Reads exception_current, not exception. Resolving an exception appends a
+    new version rather than updating the raised row (CLAUDE.md invariant #4,
+    db/migrations/tenant/0024), so the raised row keeps status='open'
+    forever -- querying the base table here would leave a resolved blocking
+    exception blocking sign-off, and now a period's validation, permanently.
+    exception_id in the returned dicts is the stable identity, the same one
+    the queue quotes.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            f'SELECT exception_key, exception_class, description, value_inr FROM "{schema}".exception_current '
+            f"WHERE tenant_id = %s AND entity_id = %s AND period_key = %s AND status = 'open' "
+            f"AND severity = 'blocking'",
+            (tenant_id, entity_id, period_key),
+        )
+        return [{"exception_id": i, "exception_class": c, "description": d, "value_inr": v}
+                  for i, c, d, v in cur.fetchall()]
+
+
 def resolve_exception(conn, schema: str, tenant_id: str, exception_id: int, resolution: str,
                       resolution_note: str, resolved_by: str) -> ExceptionRow:
     """Appends a new version carrying the resolution. The raised row is not
