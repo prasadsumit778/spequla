@@ -6,8 +6,13 @@ generation would produce -- it proves the deterministic pipeline (stages
 2, 5-10 of corpus/07 section 2) against real data, not natural-language
 understanding, which remains untested until a real ModelClient is wired up.
 
-LAST_MONTH is the last month of GL data in the synthetic manufacturer
-(seed=42, 36 months from 2022-04): 2025-03. Questions are grouped exactly
+LAST_MONTH is 2025-03, which despite the name is NOT the last month of GL
+data: synthetic/manufacturer/profile.py gives FISCAL_START 2023-04 and
+N_MONTHS 36, so the synthetic manufacturer (seed=42) runs 2023-04 through
+2026-03 and 2025-03 is month 24 of 36. Whether the golden set should instead
+resolve "last month" to the dataset's actual boundary is OQ-017; the
+fixtures are not moved here, because every expected value below is tied to
+the month it names. Questions are grouped exactly
 as corpus/10 groups them: the 37 gating questions (5 of them profile
 'consumer', correctly left unresolvable until Sprint 6's
 fact_channel_order_line exists -- see their own comments), then the 14

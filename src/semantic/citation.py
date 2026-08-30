@@ -5,7 +5,7 @@ citation is not displayed." build_citation() is therefore only callable on a
 CompiledMetric with status == 'ok' -- there is no number here to attach a
 citation to otherwise, and CLAUDE.md invariant #7 is explicit that a blocked
 metric is "not displayed. Not badged, not greyed out. Not displayed" as a
-number; the UI shows the block reason instead (see src/api/routes/metrics.py).
+number; the UI shows the block reason instead (see src/api/routes/overview.py).
 """
 from __future__ import annotations
 
