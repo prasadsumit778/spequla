@@ -150,7 +150,7 @@ def get_support_data_health(tenant_id: str, session: Session = Depends(require_a
         freshness = fetch_freshness(conn, tenant_id, entity_id=1)
         with conn.cursor() as cur:
             cur.execute(
-                f'SELECT severity, count(*), COALESCE(SUM(value_inr), 0) FROM "{schema}".exception '
+                f'SELECT severity, count(*), COALESCE(SUM(value_inr), 0) FROM "{schema}".exception_current '
                 f"WHERE tenant_id = %s AND status = 'open' GROUP BY severity",
                 (tenant_id,),
             )

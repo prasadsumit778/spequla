@@ -7,6 +7,11 @@ accept with a written reason (this endpoint's POST), defer with an owner and
 a date (also this endpoint's POST, status='deferred'). "Nothing is
 dismissed without a reason" -- resolution_note is required on every
 resolve, not optional.
+
+Resolving appends a new version of the exception; it never updates the
+raised row. The queue reads exception_current, the view that derives the
+latest version. See src/quality/exception_queue.py and CLAUDE.md
+invariant #4.
 """
 from __future__ import annotations
 
@@ -15,8 +20,29 @@ from pydantic import BaseModel
 
 from src.api.deps.auth import Session, require_role
 from src.api.deps.tenant import resolve_tenant
+from src.quality.exception_queue import (
+    ExceptionNotFound,
+    ExceptionRow,
+    ResolutionRefused,
+    list_exceptions as list_current_exceptions,
+    resolve_exception as append_resolution,
+)
 
 router = APIRouter()
+
+
+def _serialise(r: ExceptionRow) -> dict:
+    """exception_id is the exception's stable identity (its first version's
+    row id), not whichever physical row the current status came from -- so a
+    client that listed the queue before a resolution and one that listed it
+    after are talking about the same exception_id."""
+    return {
+        "exception_id": r.exception_key, "exception_class": r.exception_class, "severity": r.severity,
+        "period_key": r.period_key, "object_type": r.object_type, "object_ref": r.object_ref,
+        "value_inr": str(r.value_inr) if r.value_inr is not None else None,
+        "description": r.description, "suggested_action": r.suggested_action, "status": r.status,
+        "raised_at": r.raised_at.isoformat(),  # NOT NULL in the DDL, carried verbatim onto every version
+    }
 
 
 @router.get("/exceptions")
@@ -25,27 +51,7 @@ def list_exceptions(
     session: Session = Depends(require_role), tenant_ctx=Depends(resolve_tenant),
 ):
     conn, tenant_id, schema = tenant_ctx
-    with conn.cursor() as cur:
-        cur.execute(
-            f'SELECT exception_id, exception_class, severity, period_key, object_type, object_ref, '
-            f'       value_inr, description, suggested_action, status, raised_at '
-            f'FROM "{schema}".exception '
-            f'WHERE tenant_id = %s AND status = %s '
-            f"ORDER BY CASE severity WHEN 'blocking' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END, "
-            f'value_inr DESC NULLS LAST',
-            (tenant_id, status),
-        )
-        rows = cur.fetchall()
-    return {
-        "exceptions": [
-            {
-                "exception_id": r[0], "exception_class": r[1], "severity": r[2], "period_key": r[3],
-                "object_type": r[4], "object_ref": r[5], "value_inr": str(r[6]) if r[6] is not None else None,
-                "description": r[7], "suggested_action": r[8], "status": r[9], "raised_at": r[10].isoformat(),
-            }
-            for r in rows
-        ],
-    }
+    return {"exceptions": [_serialise(r) for r in list_current_exceptions(conn, schema, tenant_id, status)]}
 
 
 class ResolveExceptionRequest(BaseModel):
@@ -59,18 +65,12 @@ def resolve_exception(
     session: Session = Depends(require_role), tenant_ctx=Depends(resolve_tenant),
 ):
     conn, tenant_id, schema = tenant_ctx
-    if body.resolution not in ("accepted", "deferred", "resolved"):
-        raise HTTPException(status_code=422, detail="resolution must be accepted, deferred or resolved")
-    if not body.resolution_note.strip():
-        raise HTTPException(status_code=422, detail="resolution_note is required -- nothing is dismissed "
-                                                        "without a reason, per corpus/09 section 4")
-    with conn.cursor() as cur:
-        cur.execute(
-            f'UPDATE "{schema}".exception SET status = %s, resolved_by = %s, resolved_at = now(), '
-            f'resolution_note = %s WHERE exception_id = %s AND tenant_id = %s RETURNING exception_id',
-            (body.resolution, session.user_id, body.resolution_note, exception_id, tenant_id),
-        )
-        row = cur.fetchone()
-    if row is None:
-        raise HTTPException(status_code=404, detail="exception not found")
-    return {"exception_id": exception_id, "status": body.resolution}
+    try:
+        current = append_resolution(conn, schema, tenant_id, exception_id, body.resolution,
+                                    body.resolution_note, session.user_id)
+    except ResolutionRefused as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except ExceptionNotFound as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    conn.commit()
+    return {"exception_id": current.exception_key, "status": current.status}

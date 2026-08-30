@@ -321,7 +321,7 @@ def build_data_quality_appendix(conn, schema: str, tenant_id: str, unmapped_valu
     structural test."""
     with conn.cursor() as cur:
         cur.execute(
-            f'SELECT exception_class, severity, description, value_inr FROM "{schema}".exception '
+            f'SELECT exception_class, severity, description, value_inr FROM "{schema}".exception_current '
             f"WHERE tenant_id = %s AND status = 'open' "
             f"ORDER BY CASE severity WHEN 'blocking' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END, "
             f'value_inr DESC NULLS LAST',

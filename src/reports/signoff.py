@@ -134,9 +134,15 @@ def edit_commentary(conn, schema: str, report_artefact_id: int, commentary: str,
 
 
 def open_blocking_exceptions(conn, schema: str, tenant_id: str, entity_id: int, period_key: str) -> list[dict]:
+    """Reads exception_current, not exception. Resolving an exception appends
+    a new version rather than updating the raised row (CLAUDE.md invariant #4,
+    db/migrations/tenant/0024), so the raised row keeps status='open'
+    forever -- querying the base table here would leave a resolved blocking
+    exception blocking sign-off permanently. exception_id in the returned
+    dicts is the stable identity, the same one the queue quotes."""
     with conn.cursor() as cur:
         cur.execute(
-            f'SELECT exception_id, exception_class, description, value_inr FROM "{schema}".exception '
+            f'SELECT exception_key, exception_class, description, value_inr FROM "{schema}".exception_current '
             f"WHERE tenant_id = %s AND entity_id = %s AND period_key = %s AND status = 'open' "
             f"AND severity = 'blocking'",
             (tenant_id, entity_id, period_key),

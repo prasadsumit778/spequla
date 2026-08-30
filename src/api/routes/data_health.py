@@ -51,15 +51,18 @@ def _reconciliation_panel(conn, schema: str, tenant_id: str, entity_id: int, per
 
 
 def _exceptions_panel(conn, schema: str, tenant_id: str) -> dict:
+    """exception_current, not exception: a resolved exception's raised row
+    still reads status='open' because resolution appends a version rather
+    than overwriting (CLAUDE.md invariant #4, db/migrations/tenant/0024)."""
     with conn.cursor() as cur:
         cur.execute(
-            f'SELECT severity, count(*), COALESCE(SUM(value_inr), 0) FROM "{schema}".exception '
+            f'SELECT severity, count(*), COALESCE(SUM(value_inr), 0) FROM "{schema}".exception_current '
             f"WHERE tenant_id = %s AND status = 'open' GROUP BY severity",
             (tenant_id,),
         )
         by_severity = {sev: {"count": n, "value_inr": str(v)} for sev, n, v in cur.fetchall()}
         cur.execute(
-            f'SELECT exception_class, severity, description, value_inr FROM "{schema}".exception '
+            f'SELECT exception_class, severity, description, value_inr FROM "{schema}".exception_current '
             f"WHERE tenant_id = %s AND status = 'open' "
             f"ORDER BY CASE severity WHEN 'blocking' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END, "
             f'value_inr DESC NULLS LAST LIMIT 10',
