@@ -10,6 +10,8 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 
+import pytest
+
 from src.quality.checks import check_margin_sign_flip
 from src.reports.consumer_ladder import assemble_consumer_ladder
 from src.reports.manufacturing_operating import assemble_manufacturing_operating_metrics
@@ -21,6 +23,11 @@ from tests.helpers import (
     run_and_freeze_mapping,
     seed_dim_channel,
 )
+
+# corpus/11 section 3's gating tier, which is what pytest.ini's `eval` marker
+# selects. Applied at module level so `pytest -m eval` collects this file --
+# the same set .github/workflows/ci.yml already collects by path.
+pytestmark = pytest.mark.eval
 
 
 def test_marketplace_gmv_never_summed_into_revenue_live(conn, tenant):

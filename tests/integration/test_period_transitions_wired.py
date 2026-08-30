@@ -20,12 +20,13 @@ from fastapi import HTTPException
 
 from src.api.deps.auth import Session
 from src.api.routes.mapping import freeze_run
-from src.api.routes.periods import lock, reconcile
+from src.api.routes.periods import lock, reconcile, reconciliation_run
 from src.config.loader import load_taxonomy
 from src.ingest.canonical import get_placeholder_mapping_version
 from src.ingest.load_pipeline import load_gl_file
 from src.mapping.review import create_draft_version, run_mapping_pass
-from src.quality.books_to_bank import run_books_to_bank, write_reconciliation_run
+from src.quality.books_to_bank import (latest_reconciliation_run_id, run_books_to_bank,
+                                          write_reconciliation_run)
 from src.quality.checks import ExceptionCandidate, write_exceptions
 from src.quality.exception_queue import list_exceptions, open_blocking_exceptions, resolve_exception
 from src.quality.period_state import get_current_period_lock, validate_period
@@ -250,6 +251,64 @@ def test_freezing_a_mapping_version_maps_only_validated_periods_inside_its_windo
 
 
 # --------------------------------------------------------------------------
+# The books-to-bank run, its own endpoint (OQ-014)
+# --------------------------------------------------------------------------
+
+def test_the_reconciliation_run_endpoint_produces_the_run_reconcile_requires(conn, tenant):
+    """OQ-014: before this endpoint existed, nothing in src/ wrote a
+    books_to_bank reconciliation_run, so POST /periods/{key}/reconcile
+    returned 422 for every period forever in any API-driven deployment. Every
+    test that got past it called run_books_to_bank directly, which is exactly
+    why the gap never surfaced as a failure. This drives the API path only."""
+    tenant_id, schema = tenant
+    ingest_manufacturer(conn, schema, tenant_id, ENTITY_ID)
+    version_id, _body = _run_pass_and_freeze(conn, schema, tenant_id, ENTITY_ID, date(2022, 4, 1))
+    period = "2025-03"
+    assert get_current_period_lock(conn, schema, tenant_id, ENTITY_ID, period).status == "mapped"
+
+    body = reconciliation_run(period_key=period, entity_id=ENTITY_ID, session=SESSION,
+                                  tenant_ctx=(conn, tenant_id, schema))
+    assert body["check_type"] == "books_to_bank"
+    assert body["run_by"] == "pytest-analyst", "the name comes from the verified session"
+    assert body["mapping_version_id"] == version_id, \
+        "resolved off the period's own lock row, never named by the caller"
+    # D-052 is unset, so nothing here classifies the residual -- it is stated.
+    assert body["status"] == "unreconciled"
+    # corpus/09 section 3.2: residual = books - bank - modelled, and with no
+    # modelled differences configured the whole gap is the residual.
+    assert body["modelled_differences"] == []
+    assert (Decimal(body["residual_inr"])
+                == Decimal(body["books_total_inr"]) - Decimal(body["bank_total_inr"]))
+
+    # The run it wrote is the one the reconcile endpoint finds.
+    assert latest_reconciliation_run_id(conn, schema, tenant_id, ENTITY_ID, period,
+                                             "books_to_bank") == body["reconciliation_run_id"]
+
+    # And the period has not moved: this endpoint computes, it does not transition.
+    assert get_current_period_lock(conn, schema, tenant_id, ENTITY_ID, period).status == "mapped"
+
+
+def test_the_reconciliation_run_endpoint_refuses_a_period_below_mapped(conn, tenant):
+    """A VALIDATED period's lock row points at the ingestion-time placeholder
+    mapping version, which carries no map_account rows -- class_movements
+    through it returns nothing, so the run would record a books total of zero
+    and a residual that is merely the negative of the bank total. OQ-014's
+    resolution rejects option (a), at load, for precisely this reason, so the
+    endpoint refuses rather than storing that artefact."""
+    tenant_id, schema = tenant
+    ingest_manufacturer(conn, schema, tenant_id, ENTITY_ID)
+    period = "2025-03"
+    assert get_current_period_lock(conn, schema, tenant_id, ENTITY_ID, period).status == "validated"
+
+    with pytest.raises(HTTPException) as refused:
+        reconciliation_run(period_key=period, entity_id=ENTITY_ID, session=SESSION,
+                              tenant_ctx=(conn, tenant_id, schema))
+    assert refused.value.status_code == 422
+    assert "is validated, not mapped" in refused.value.detail
+    assert latest_reconciliation_run_id(conn, schema, tenant_id, ENTITY_ID, period, "books_to_bank") is None
+
+
+# --------------------------------------------------------------------------
 # MAPPED -> RECONCILED -> LOCKED, from their endpoints
 # --------------------------------------------------------------------------
 
@@ -267,10 +326,11 @@ def test_the_reconcile_and_lock_endpoints_compute_their_own_preconditions(conn, 
     assert refused.value.status_code == 422
     assert "no books-to-bank reconciliation_run" in refused.value.detail
 
-    recon = run_books_to_bank(conn, schema, tenant_id, ENTITY_ID, version_id, period)
-    run_id = write_reconciliation_run(conn, schema, tenant_id, ENTITY_ID, version_id,
-                                          "books_to_bank", recon, "pytest-analyst")
-    conn.commit()
+    # Produced through its own endpoint, not by calling run_books_to_bank
+    # here: a fixture that reaches RECONCILED without the API is what let
+    # OQ-014 sit unnoticed.
+    run_id = reconciliation_run(period_key=period, entity_id=ENTITY_ID, session=SESSION,
+                                    tenant_ctx=(conn, tenant_id, schema))["reconciliation_run_id"]
 
     body = reconcile(period_key=period, entity_id=ENTITY_ID, session=SESSION, tenant_ctx=(conn, tenant_id, schema))
     assert body["status"] == "reconciled"

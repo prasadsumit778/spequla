@@ -102,10 +102,10 @@ def _reconciled(conn, schema, tenant_id):
 def test_the_two_reportable_sets_are_corpus_09_section_5s_annotations():
     """Read literally off the diagram, and asserted here so a later edit that
     quietly widens either set fails."""
-    assert STATEMENTS_REPORTABLE == ("mapped", "reconciled", "locked")
+    assert STATEMENTS_REPORTABLE == ("mapped", "reconciled", "locked", "restated")
     assert PACK_REPORTABLE == ("reconciled", "locked")
-    # 'restated' is in neither -- provisionally, pending OQ-010.
-    assert "restated" not in STATEMENTS_REPORTABLE
+    # 'restated' is readable and not packable, per OQ-010's resolution.
+    assert "restated" in STATEMENTS_REPORTABLE
     assert "restated" not in PACK_REPORTABLE
     # 'open' and 'validated' are in neither, which is the gate itself.
     for state in ("open", "validated"):
@@ -319,7 +319,7 @@ def test_the_pack_refuses_at_mapped_and_generates_at_reconciled(conn, tenant):
 
 
 # --------------------------------------------------------------------------
-# LOCKED serves; RESTATED does not, provisionally
+# LOCKED serves both; RESTATED serves statements and not the pack
 # --------------------------------------------------------------------------
 
 def test_a_locked_period_is_reportable_for_both_thresholds(conn, tenant):
@@ -337,12 +337,12 @@ def test_a_locked_period_is_reportable_for_both_thresholds(conn, tenant):
     assert pnl["lines"]
 
 
-def test_a_restated_period_is_refused_pending_oq_010(conn, tenant):
-    """Provisional, and deliberately so. corpus/09 section 5 draws RESTATED
-    without saying whether it may be read; OPEN_QUESTIONS.md OQ-010 is that
-    question. Until it is answered the gate refuses, and the refusal says so
-    -- if OQ-010 resolves the other way this test is what changes, visibly,
-    rather than the behaviour drifting."""
+def test_a_restated_period_serves_statements_and_refuses_the_pack(conn, tenant):
+    """OQ-010's resolution, which corpus/09 section 5 does not itself state:
+    RESTATED reads like MAPPED and packs like nothing. Refusing it on the
+    statement surfaces would hide the corrected number and leave the
+    superseded one as the last thing anybody saw; letting it into a pack
+    would sign (D-039) over a delta nobody has explained yet."""
     tenant_id, schema = tenant
     _reconciled(conn, schema, tenant_id)
     current = get_current_period_lock(conn, schema, tenant_id, ENTITY_ID, PERIOD)
@@ -352,17 +352,29 @@ def test_a_restated_period_is_refused_pending_oq_010(conn, tenant):
     conn.commit()
     assert get_current_period_lock(conn, schema, tenant_id, ENTITY_ID, PERIOD).status == "restated"
 
-    reportability = resolve_period_reportability(conn, schema, tenant_id, ENTITY_ID, PERIOD,
-                                                       STATEMENTS_REPORTABLE)
-    assert not reportability.reportable
-    assert "OQ-010" in reportability.detail()
-    assert "provisional" in reportability.detail()
+    # Readable on the statement threshold, and the P&L actually serves.
+    assert resolve_period_reportability(conn, schema, tenant_id, ENTITY_ID, PERIOD,
+                                              STATEMENTS_REPORTABLE).reportable
+    pnl = get_pnl(period_start=PERIOD_START, period_end=PERIOD_END, profile="manufacturing",
+                     entity_id=ENTITY_ID, session=SESSION, tenant_ctx=(conn, tenant_id, schema))
+    assert pnl["lines"]
 
-    with pytest.raises(HTTPException) as exc:
-        get_pnl(period_start=PERIOD_START, period_end=PERIOD_END, profile="manufacturing",
-                   entity_id=ENTITY_ID, session=SESSION, tenant_ctx=(conn, tenant_id, schema))
-    assert exc.value.status_code == 422
-    assert "OQ-010" in exc.value.detail
+    # Refused on the pack threshold, with the refusal stating the split
+    # rather than citing an open question.
+    reportability = resolve_period_reportability(conn, schema, tenant_id, ENTITY_ID, PERIOD, PACK_REPORTABLE)
+    assert not reportability.reportable
+    assert "signed against a locked period" in reportability.detail()
+
+    with pytest.raises(PeriodNotReportable) as exc:
+        generate_pack(conn, schema, tenant_id, ENTITY_ID, "manufacturing", PERIOD, load_registry(),
+                         generated_by="pytest")
+    assert exc.value.reportability.status == "restated"
+
+    with pytest.raises(HTTPException) as http_exc:
+        generate_report(GenerateRequest(period=PERIOD, entity_id=ENTITY_ID, profile="manufacturing"),
+                           session=SESSION, tenant_ctx=(conn, tenant_id, schema))
+    assert http_exc.value.status_code == 422
+    assert "'restated'" in http_exc.value.detail
 
 
 # --------------------------------------------------------------------------

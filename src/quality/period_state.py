@@ -27,10 +27,15 @@ requires the trial balance to tie (zero tolerance, D-051, that part IS
 settled) and a books-to-bank reconciliation_run to exist for the period (the
 residual computed and itemised, src/quality/books_to_bank.py) -- and then
 requires a named human `approved_by` to mark the period reconciled, exactly
-the way lock_period() already requires a named human sign-off per D-039. The
-residual is never cleared or hidden once marked reconciled; every citation
-resolving through this period keeps reporting it, per invariant #7's spirit
-that a caveat is never dropped once attached.
+the way lock_period() already requires a named human sign-off per D-039. That
+run is produced by POST /periods/{key}/reconciliation-run, its own endpoint
+and not part of this transition (OPEN_QUESTIONS.md OQ-014) -- corpus/09
+section 3.2 wants the residual stated, itemised and seen before anyone
+decides, so computing it precedes the request that records the decision
+rather than accompanying it. The residual is never cleared or hidden once
+marked reconciled; every citation resolving through this period keeps
+reporting it, per invariant #7's spirit that a caveat is never dropped once
+attached.
 
 **Every transition checks the state it is transitioning out of.** corpus/09
 section 5 draws five arrows and states one rule about them -- "A period never
@@ -234,7 +239,8 @@ def reconcile_period(conn, schema: str, tenant_id: str, entity_id: int, period_k
         raise InvalidTransition(f"trial balance does not tie for {period_key} -- D-051, zero tolerance, blocking")
     if reconciliation_run_id is None:
         raise InvalidTransition(f"no books-to-bank reconciliation_run exists for {period_key} -- "
-                                  f"run src/quality/books_to_bank.run_books_to_bank first")
+                                  f"POST /periods/{period_key}/reconciliation-run first, and read the "
+                                  f"residual it returns before reconciling")
     if not approved_by:
         raise InvalidTransition("reconcile_period requires a named approver, per corpus/06 section 4.3's "
                                   "'every action is logged with a timestamp and a name'")

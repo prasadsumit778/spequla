@@ -36,6 +36,8 @@ from __future__ import annotations
 
 from datetime import date
 
+import pytest
+
 from src.config.loader import load_registry
 from src.quality.period_gate import STATEMENTS_REPORTABLE, resolve_period_reportability
 from src.semantic.ask import ask
@@ -53,6 +55,11 @@ from tests.helpers import (
     ingest_manufacturer,
     run_and_freeze_mapping,
 )
+
+# corpus/11 section 3's gating tier, which is what pytest.ini's `eval` marker
+# selects. Applied at module level so `pytest -m eval` collects this file --
+# the same set .github/workflows/ci.yml already collects by path.
+pytestmark = pytest.mark.eval
 
 # Expected status per real (non-consumer) gating question, worked out from
 # this project's actual current state -- see this module's docstring.

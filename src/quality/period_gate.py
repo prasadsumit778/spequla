@@ -17,18 +17,19 @@ management pack needs RECONCILED or later. Nothing here invents a threshold
 literally, and LOCKED is in both because section 5 draws it downstream of
 each ("snapshot_at pinned. Reports render against this snapshot forever").
 
-**RESTATED is in neither set, provisionally.** corpus/09 section 5 draws
-RESTATED as a terminal state -- "new period_lock row, pointer to the prior
-one, delta explained" -- and says nothing whatsoever about whether a period
-in it may be read. It is genuinely ambiguous: the restatement path exists
-precisely so a corrected period keeps being reportable, which argues for
-including it; but the state is also entered the moment a change *arrives*,
-before anyone has explained the delta, which argues that reading it serves
-a number nobody has reviewed. That question is OPEN_QUESTIONS.md OQ-010 and
-is not resolved here. Until it is, RESTATED is excluded -- the direction
-that refuses rather than the direction that displays, per CLAUDE.md section
-3.2's "make the code fail loudly rather than proceed". **This exclusion is
-provisional and changes when OQ-010 is answered.**
+**RESTATED is in STATEMENTS_REPORTABLE and not in PACK_REPORTABLE.**
+corpus/09 section 5 draws RESTATED as a terminal state -- "new period_lock
+row, pointer to the prior one, delta explained" -- and says nothing about
+whether a period in it may be read, so the split is a decision on record
+rather than a sentence of the corpus (OPEN_QUESTIONS.md OQ-010, resolved
+2026-08-31). It mirrors the MAPPED/RECONCILED split section 5 already
+draws, for the same reason. Refusing a restated period on the statement
+surfaces would hide the corrected number and leave the superseded one as
+the last thing anybody saw, which is the worse of the two failures. A pack
+is different: it is signed against a locked period (D-039) and RESTATED is
+entered the moment a change *arrives*, before the delta has been explained,
+so a pack generated from one would carry a signature over a number no human
+has reviewed.
 
 **The gate belongs at the route and service boundary, never inside
 assemble_*.** The assembly functions in src/reports are the thing that
@@ -47,9 +48,10 @@ from src.quality.period_state import get_current_period_lock
 from src.reports.query import NoApprovedMappingError, resolve_mapping_version_for_period
 from src.semantic.citation import fetch_unmapped_value_inr
 
-# corpus/09 section 5's own annotations, as data. See this module's docstring
-# for why 'restated' is in neither and which open question governs that.
-STATEMENTS_REPORTABLE: tuple[str, ...] = ("mapped", "reconciled", "locked")
+# corpus/09 section 5's own annotations, as data, plus OQ-010's resolution of
+# where 'restated' sits. See this module's docstring for the reasoning on
+# each set.
+STATEMENTS_REPORTABLE: tuple[str, ...] = ("mapped", "reconciled", "locked", "restated")
 PACK_REPORTABLE: tuple[str, ...] = ("reconciled", "locked")
 
 
@@ -89,8 +91,9 @@ class PeriodReportability:
         )
         if self.status == "restated":
             base += (
-                " Whether a restated period may be read is OPEN_QUESTIONS.md OQ-010, unresolved -- this"
-                " exclusion is provisional."
+                " A restated period is readable on the statement surfaces and is not packable: a pack is"
+                " signed against a locked period (D-039), and RESTATED is entered when a change arrives,"
+                " before the delta has been explained."
             )
         return base
 

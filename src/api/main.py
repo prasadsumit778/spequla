@@ -8,9 +8,10 @@ management pack -- generate, review, edit commentary, sign, export.
 Forecasting build (corpus/13, 2026-08-24): scenario save/list/run for the
 apparel/retail profile's driver-based operating forecast. corpus/09 section
 5's period state machine is wired end to end: a GL load validates the periods
-it touched, freezing a mapping version maps the periods it governs, and
-/periods/{period}/reconcile and /periods/{period}/lock are the two
-transitions a named human performs."""
+it touched, freezing a mapping version maps the periods it governs,
+/periods/{period}/reconciliation-run computes the books-to-bank residual the
+next step consumes, and /periods/{period}/reconcile and
+/periods/{period}/lock are the two transitions a named human performs."""
 from __future__ import annotations
 
 import os

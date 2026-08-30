@@ -15,11 +15,18 @@ from __future__ import annotations
 
 from datetime import date
 
+import pytest
+
 from src.config.loader import load_registry
 from src.quality.checks import ExceptionCandidate, write_exceptions
 from src.reports.pack import generate_pack
 from src.reports.signoff import SignOffBlocked, edit_commentary, render_pack, sign_pack, write_report_artefact
 from tests.helpers import advance_periods_to_reconciled, ingest_manufacturer, run_and_freeze_mapping
+
+# corpus/11 section 3's gating tier, which is what pytest.ini's `eval` marker
+# selects. Applied at module level so `pytest -m eval` collects this file --
+# the same set .github/workflows/ci.yml already collects by path.
+pytestmark = pytest.mark.eval
 
 PERIOD_KEY = "2024-06"
 

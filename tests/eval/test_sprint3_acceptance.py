@@ -19,6 +19,8 @@ from __future__ import annotations
 
 from datetime import date
 
+import pytest
+
 from src.config.loader import load_registry
 from src.quality.books_to_bank import run_books_to_bank, write_reconciliation_run
 from src.quality.period_state import get_current_period_lock, map_period, reconcile_period
@@ -26,6 +28,11 @@ from src.quality.trial_balance import check_trial_balance
 from src.semantic.citation import NotCitable, build_citation
 from src.semantic.compiler import compile_metric
 from tests.helpers import ingest_manufacturer, run_and_freeze_mapping
+
+# corpus/11 section 3's gating tier, which is what pytest.ini's `eval` marker
+# selects. Applied at module level so `pytest -m eval` collects this file --
+# the same set .github/workflows/ci.yml already collects by path.
+pytestmark = pytest.mark.eval
 
 NINE_TILES = ["net_revenue", "gross_margin_pct", "ebitda", "cash", "net_debt",
                 "working_capital", "dso", "dio", "dpo"]
