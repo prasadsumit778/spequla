@@ -31,6 +31,22 @@ the way lock_period() already requires a named human sign-off per D-039. The
 residual is never cleared or hidden once marked reconciled; every citation
 resolving through this period keeps reporting it, per invariant #7's spirit
 that a caveat is never dropped once attached.
+
+**Every transition checks the state it is transitioning out of.** corpus/09
+section 5 draws five arrows and states one rule about them -- "A period never
+moves backwards silently" -- so a transition is admitted only from the state
+the diagram draws it out of, and `_PREDECESSOR` below is that diagram as
+data. This is deliberately strict about what corpus/09 does NOT draw: there
+is no self-arrow on any state, and no arrow leaves RESTATED at all. Three
+cases therefore raise InvalidTransition rather than being resolved here --
+re-running a transition on a period already in that state, re-entering the
+machine after a restatement, and a period that becomes structurally unsound
+again after new data arrives (corpus/09 section 5's own sentence about that
+case, "if a locked period becomes unreconciled because new data arrived,"
+covers LOCKED and only LOCKED; it says nothing about a VALIDATED or MAPPED
+period going bad). Each fails loudly with the current status named, per
+CLAUDE.md section 3.1. A caller that hits one has found a real question about
+the state machine, and that is an escalation, not a branch to add here.
 """
 from __future__ import annotations
 
@@ -39,6 +55,25 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 
 STATES = ("open", "validated", "mapped", "reconciled", "locked", "restated")
+
+# corpus/09 section 5's arrows, drawn literally: the state a period must
+# already be in for each transition to be admitted.
+#
+# OPEN is the ABSENCE of a period_lock row, not a stored value -- nothing
+# inserts 'open', and nothing can: period_lock.mapping_version_id is NOT NULL
+# REFERENCES mapping_version (db/migrations/tenant/0009_period_lock.sql), so
+# no row can exist for a period before a mapping version does. Every reader
+# already resolves a missing row that way (src/reports/pack.py,
+# src/api/routes/overview.py and src/semantic/ask_compiler.py all read
+# `lock.status if lock else "open"`), so None here is that same convention,
+# not a separate sentinel.
+_PREDECESSOR: dict[str, str | None] = {
+    "validated": None,          # OPEN       -> VALIDATED
+    "mapped": "validated",      # VALIDATED  -> MAPPED
+    "reconciled": "mapped",     # MAPPED     -> RECONCILED
+    "locked": "reconciled",     # RECONCILED -> LOCKED
+    "restated": "locked",       # LOCKED     -> RESTATED
+}
 
 # D-040's resolved text (corpus/00 section 2b): "Every change to a locked
 # period is flagged. Notification above 0.25 percent of period revenue,
@@ -97,12 +132,30 @@ def _insert(conn, schema: str, tenant_id: str, entity_id: int, period_key: str, 
         return cur.fetchone()[0]
 
 
+def _require_predecessor(conn, schema: str, tenant_id: str, entity_id: int, period_key: str,
+                            target: str) -> PeriodLockRow | None:
+    """Enforces corpus/09 section 5's arrow into `target`. Returns the current
+    row (None when the predecessor is OPEN) so a caller that needs the row it
+    is superseding -- restate_period, for restated_from -- does not read it
+    twice. See this module's docstring for what is deliberately NOT admitted."""
+    expected = _PREDECESSOR[target]
+    current = get_current_period_lock(conn, schema, tenant_id, entity_id, period_key)
+    actual = current.status if current is not None else None
+    if actual != expected:
+        raise InvalidTransition(
+            f"{period_key} is {actual or 'open'}, not {expected or 'open'} -- corpus/09 section 5 "
+            f"admits {expected or 'open'} -> {target} and no other path into {target}"
+        )
+    return current
+
+
 def validate_period(conn, schema: str, tenant_id: str, entity_id: int, period_key: str,
                        mapping_version_id: int, blocking_exception_count: int) -> int:
     """OPEN -> VALIDATED: 'all blocking checks pass' (corpus/09 section 5).
     blocking_exception_count comes from src/quality/checks.py's catalogue
     run for this period -- passed in rather than queried here so this
     function stays a simple precondition check, independently testable."""
+    _require_predecessor(conn, schema, tenant_id, entity_id, period_key, "validated")
     if blocking_exception_count > 0:
         raise InvalidTransition(f"{blocking_exception_count} open blocking exception(s) for {period_key} -- "
                                   f"corpus/09 section 5 requires all blocking checks to pass before VALIDATED")
@@ -116,6 +169,7 @@ def map_period(conn, schema: str, tenant_id: str, entity_id: int, period_key: st
     enforces the 98% coverage gate (corpus/06a Coverage tab) before a
     version can even become 'approved'; freeze_passed/coverage_pct are its
     own FreezeResult, threaded through rather than re-queried."""
+    _require_predecessor(conn, schema, tenant_id, entity_id, period_key, "mapped")
     if not freeze_passed:
         raise InvalidTransition(f"mapping version {mapping_version_id} has not passed the freeze gate -- "
                                   f"corpus/06 section 6 rule 1: no statement and no metric before version 1 is approved")
@@ -128,6 +182,7 @@ def reconcile_period(conn, schema: str, tenant_id: str, entity_id: int, period_k
     """MAPPED -> RECONCILED. See this module's docstring for why this is a
     human action gated on the reconciliation having been RUN, not on a
     tolerance that does not exist (D-052)."""
+    _require_predecessor(conn, schema, tenant_id, entity_id, period_key, "reconciled")
     if not trial_balance_balanced:
         raise InvalidTransition(f"trial balance does not tie for {period_key} -- D-051, zero tolerance, blocking")
     if reconciliation_run_id is None:
@@ -146,6 +201,7 @@ def lock_period(conn, schema: str, tenant_id: str, entity_id: int, period_key: s
     the 15th of the following month.' snapshot_at is pinned here -- 'every
     report for that period queries against' this timestamp forever
     (corpus/04 section 3.8)."""
+    _require_predecessor(conn, schema, tenant_id, entity_id, period_key, "locked")
     if not locked_by:
         raise InvalidTransition("lock_period requires a named locker, per D-039")
     now = datetime.now(timezone.utc)
@@ -175,9 +231,6 @@ def restate_period(conn, schema: str, tenant_id: str, entity_id: int, period_key
     was found. Every restatement is flagged (D-040); notify_required is a
     separate signal for whoever consumes the flag, not gating whether the
     restatement itself is recorded."""
-    current = get_current_period_lock(conn, schema, tenant_id, entity_id, period_key)
-    if current is None or current.status != "locked":
-        raise InvalidTransition(f"{period_key} is not currently locked -- restatement only applies to a "
-                                  f"period that was locked (current status: {current.status if current else 'none'})")
+    current = _require_predecessor(conn, schema, tenant_id, entity_id, period_key, "restated")
     return _insert(conn, schema, tenant_id, entity_id, period_key, "restated", mapping_version_id,
                      restated_from=current.lock_id, restatement_reason=restatement_reason)
