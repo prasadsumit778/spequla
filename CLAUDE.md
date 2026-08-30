@@ -57,6 +57,19 @@ You do not know Tally's XML tags, TallyPrime export headers, Indian bank stateme
 
 No example figures presented as real, no placeholder metrics, no invented benchmarks, no made-up accuracy targets. Synthetic test data is permitted and required, and every row of it is labelled synthetic in the data itself.
 
+### 3.5 Never read or output a secret
+
+`.env`, `.env.*`, and any file containing credentials are never read, printed,
+`cat`-ed, echoed, grepped, tailed, copied, piped, committed or logged — not
+partially, not masked, not truncated. The same applies to `printenv`, `env`,
+`set`, and anything that dumps process environment.
+
+If a task needs a variable's *name*, refer to `.env.example`. To check
+configuration, test for existence (`[ -n "$VAR" ] && echo set`), never value.
+If a task appears to require a secret's value, that is an escalation per
+section 4, not a judgement call.
+
+
 ---
 
 ## 4. When you must stop
