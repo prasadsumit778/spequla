@@ -184,8 +184,26 @@ def ask(conn, schema: str, tenant_id: str, entity_id: int, question: str, model_
                                                     result.compiled_metric, "reconciled")
             citation_dict = citation.as_dict()
             citation_dict["value"] = str(citation_dict["value"])
-        except NotCitable:
-            pass
+        except NotCitable as e:
+            # The metric compiled, but nothing backs it -- no source rows, or
+            # no source file behind the rows (src/semantic/citation.py's
+            # guards). Falling through to the 'ok' return below would answer
+            # the question with a number and citation=None, which is the one
+            # thing CLAUDE.md invariant 7 forbids: "a number without one is
+            # not displayed. Not badged, not greyed out. Not displayed."
+            #
+            # This is an ordinary question, not a corner case: any period_sum
+            # metric asked for a month not yet loaded resolves to 0 over zero
+            # rows. "What was our revenue in June?" before June is ingested.
+            # corpus/07 section 6's "requires data not held" is exactly that
+            # -- the same class the sibling branch above uses, and e already
+            # names the metric and what is missing, so it is passed through
+            # rather than restated.
+            refusal = build_refusal("requires_data_not_held", str(e))
+            _log(conn, tenant_id, entity_id, user_id, role, question, ir.intent, ir_dict, result.sql_text,
+                   True, None, None, result.compiled_metric.row_count, started, None, None)
+            return AskResponse(status="unavailable", question=question, intent=ir.intent, ir=ir_dict,
+                                  result=result, refusal=refusal)
 
     _log(conn, tenant_id, entity_id, user_id, role, question, ir.intent, ir_dict, result.sql_text,
            True, None, None, result.row_count, started,
