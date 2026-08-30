@@ -66,7 +66,12 @@ class ModelledDifference:
 class ReconciliationResult:
     period_key: str
     books_total: Decimal
-    bank_total: Decimal
+    # None only for check_type='trial_balance' -- that check has one source,
+    # not two, and reconciliation_run.bank_amount_inr is null for it by the
+    # column's own comment (db/migrations/tenant/0011). Every books-to-bank
+    # path here produces a Decimal; see src/quality/trial_balance.
+    # as_reconciliation_result for the one that does not.
+    bank_total: Decimal | None
     modelled_differences: list[ModelledDifference] = field(default_factory=list)
     residual: Decimal = Decimal("0")
 

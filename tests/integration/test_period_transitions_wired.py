@@ -22,12 +22,13 @@ from src.api.deps.auth import Session
 from src.api.routes.mapping import freeze_run
 from src.api.routes.periods import lock, reconcile
 from src.config.loader import load_taxonomy
+from src.ingest.canonical import get_placeholder_mapping_version
 from src.ingest.load_pipeline import load_gl_file
 from src.mapping.review import create_draft_version, run_mapping_pass
 from src.quality.books_to_bank import run_books_to_bank, write_reconciliation_run
 from src.quality.checks import ExceptionCandidate, write_exceptions
-from src.quality.exception_queue import resolve_exception
-from src.quality.period_state import get_current_period_lock
+from src.quality.exception_queue import list_exceptions, open_blocking_exceptions, resolve_exception
+from src.quality.period_state import get_current_period_lock, validate_period
 from tests.helpers import ingest_manufacturer
 
 ENTITY_ID = 1
@@ -125,9 +126,11 @@ def test_a_second_load_of_an_already_validated_period_is_skipped_and_reported(co
 def test_a_period_with_an_open_blocking_exception_is_held_at_open(conn, tenant):
     """corpus/09 section 5's OPEN -> VALIDATED condition is "all blocking
     checks pass," read off the exception queue -- the same query corpus/08
-    section 10's sign-off gate uses. Nothing writes to that queue in the
-    production path yet, so this test raises the exception itself: the point
-    is that the gate is a live wire, not that anything currently pulls it."""
+    section 10's sign-off gate uses. The gate is held against a completeness
+    exception raised by this test rather than the trial balance one the load
+    now raises itself (tests/integration/test_trial_balance_blocks.py), so
+    what it demonstrates stays what it says: the gate answers to the queue,
+    not to any one check that writes into it."""
     tenant_id, schema = tenant
     [exception_id] = write_exceptions(conn, schema, tenant_id, ENTITY_ID, [ExceptionCandidate(
         exception_class="completeness", severity="blocking", period_key="2026-04",
@@ -215,8 +218,16 @@ def test_freezing_a_mapping_version_maps_only_validated_periods_inside_its_windo
     # Outside the window: FY24 renders with whatever version covers it
     # forever, so freezing this one says nothing about those periods and
     # must not touch them.
+    assert "2024-03" not in by_period
+    assert get_current_period_lock(conn, schema, tenant_id, ENTITY_ID, "2024-03").status == "validated"
+
+    # 2023-12 is outside the window too, but it is not the witness for
+    # "untouched" -- the synthetic manufacturer's defect #4 imbalances that
+    # month, so its GL load raised corpus/09 section 2.4's blocking exception
+    # and it never left OPEN. A period with no lock row proves nothing about
+    # what the freeze did or did not reach.
     assert "2023-12" not in by_period
-    assert get_current_period_lock(conn, schema, tenant_id, ENTITY_ID, "2023-12").status == "validated"
+    assert get_current_period_lock(conn, schema, tenant_id, ENTITY_ID, "2023-12") is None
 
     # Inside the window and still OPEN: reported, not moved.
     assert by_period[held]["transitioned"] is False
@@ -282,11 +293,34 @@ def test_reconcile_refuses_a_period_whose_trial_balance_does_not_tie(conn, tenan
     a period that does not tie cannot be reconciled by a caller who simply
     does not mention it. The synthetic manufacturer's defect #4 (corpus/11
     section 2.2) posts one deliberately one-sided voucher, so exactly one
-    month of the reference dataset genuinely fails."""
+    month of the reference dataset genuinely fails.
+
+    That month no longer reaches MAPPED by itself: its GL load raises
+    corpus/09 section 2.4's blocking exception and holds it at OPEN. This
+    endpoint's gate sits BEHIND that one, so the period is walked past the
+    first gate the only way a human could -- corpus/09 section 4's "accept
+    with a written reason" -- and the second gate still refuses. Accepting an
+    exception does not make a trial balance tie, and D-051 is enforced twice
+    rather than once."""
     tenant_id, schema = tenant
     data = ingest_manufacturer(conn, schema, tenant_id, ENTITY_ID)
-    version_id, _body = _run_pass_and_freeze(conn, schema, tenant_id, ENTITY_ID, date(2022, 4, 1))
     [broken] = [e["month"] for e in data.defect_log.entries if e["defect_id"] == 4]
+    assert get_current_period_lock(conn, schema, tenant_id, ENTITY_ID, broken) is None, \
+        "the load's trial balance exception should have held this period at OPEN"
+
+    [raised] = [e for e in list_exceptions(conn, schema, tenant_id, "open")
+                  if e.period_key == broken and e.exception_class == "consistency"]
+    resolve_exception(conn, schema, tenant_id, raised.exception_key, "accepted",
+                         "accepted so the gate behind this one is reachable", "pytest-analyst")
+    conn.commit()
+    still_open = open_blocking_exceptions(conn, schema, tenant_id, ENTITY_ID, broken)
+    assert still_open == [], "accepting it should clear the queue, so the refusal below is only the TB"
+    validate_period(conn, schema, tenant_id, ENTITY_ID, broken,
+                       get_placeholder_mapping_version(conn, schema, tenant_id, ENTITY_ID),
+                       blocking_exception_count=len(still_open))
+    conn.commit()
+
+    version_id, _body = _run_pass_and_freeze(conn, schema, tenant_id, ENTITY_ID, date(2022, 4, 1))
     assert get_current_period_lock(conn, schema, tenant_id, ENTITY_ID, broken).status == "mapped"
 
     # A reconciliation run exists, so the refusal below can only be the trial

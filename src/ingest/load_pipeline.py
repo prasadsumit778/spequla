@@ -12,7 +12,9 @@ they block two different things (corpus/09 section 2):
     metrics quietly." Nothing is written if this fires.
   - Trial balance imbalance (section 2.4/3.1) blocks STATEMENT ASSEMBLY, not
     ingestion -- the facts must exist in fact_gl_entry for the check to be
-    computable at all. It is reported on the result, not rolled back.
+    computable at all. It is reported on the result, not rolled back, and it
+    raises the catalogue's blocking exception, which holds the period at OPEN
+    (section 5) so nothing downstream assembles a statement off it.
 """
 from __future__ import annotations
 
@@ -40,13 +42,21 @@ from src.ingest.staging import (
     stage_store_master,
     stage_tb,
 )
+from src.quality.books_to_bank import write_reconciliation_run
+from src.quality.checks import write_exceptions
 from src.quality.exception_queue import open_blocking_exceptions
 from src.quality.period_state import (
     PeriodTransitionOutcome,
     get_current_period_lock,
     validate_period,
 )
-from src.quality.trial_balance import TrialBalanceCheckResult, check_trial_balance
+from src.quality.trial_balance import (
+    TRIAL_BALANCE_TOLERANCE_PCT,
+    TrialBalanceCheckResult,
+    as_reconciliation_result,
+    check_trial_balance,
+    imbalance_exception,
+)
 
 
 @dataclass
@@ -115,25 +125,35 @@ def _validate_loaded_periods(conn, schema: str, tenant_id: str, entity_id: int,
     against the exception queue -- src/quality/exception_queue.
     open_blocking_exceptions, the same query corpus/08 section 10's sign-off
     gate uses, so "a blocking exception is open for this period" has one
-    meaning in this system rather than two that drift. That query returns
-    zero for every period today: nothing in the production path calls
-    src/quality/checks.write_exceptions, so no exception row is ever raised
-    and this gate currently admits every period whose predecessor state
-    allows it. It is wired against the real query now so it starts blocking
-    the moment a writer exists rather than being remembered later -- but
-    until then it is a live wire carrying no current, and reading this as
-    though the check catalogue were enforced would be wrong.
+    meaning in this system rather than two that drift.
+
+    **This gate now carries current.** It used to be a live wire with
+    nothing behind it: no production code called
+    src/quality/checks.write_exceptions, so the query returned zero for
+    every period and the gate admitted everything its predecessor state
+    allowed. load_gl_file is now the exception table's first production
+    writer -- corpus/09 section 2.4's trial balance row, raised as a
+    blocking 'consistency' exception before this function runs -- so a
+    period whose trial balance does not tie is genuinely held at OPEN, and
+    the reference dataset has one such period (the synthetic manufacturer's
+    seeded defect #4 month). Reading a period's VALIDATED row as "the check
+    catalogue passed" is still an overstatement: one catalogue row writes
+    here, not all of them.
 
     The trial balance check that ran moments earlier in load_gl_file is
-    deliberately NOT folded in on the side. corpus/09 section 2.4 catalogues
-    a trial balance imbalance as blocking, so it will arrive here through the
-    queue like every other blocking check once the catalogue writes to it;
-    counting it separately now would build a second path to the same
-    condition, which is the drift open_blocking_exceptions was just
-    consolidated to prevent. Until then a period whose trial balance does not
-    tie does reach VALIDATED. Nothing renders off that today: MAPPED ->
-    RECONCILED computes the trial balance itself and refuses on any non-zero
-    total (D-051), and no read path consults period status.
+    still deliberately NOT folded in on the side. It arrives here through
+    the queue like every other blocking check; counting its result
+    separately would build a second path to the same condition, which is the
+    drift open_blocking_exceptions was consolidated to prevent. The
+    ordering that makes this work lives at the call site: the exception is
+    written before this function is called, or the period validates and only
+    then learns it should not have.
+
+    MAPPED -> RECONCILED remains an independent gate: it computes the trial
+    balance itself and refuses on any non-zero total (D-051). Two gates on
+    the same condition, not one -- a period that reaches MAPPED with facts
+    that have since stopped tying (see the skip rule below) is still refused
+    there.
 
     **An already-validated period is skipped, not refused** -- OQ-009(a),
     resolved 2026-08-30. corpus/09 section 5 draws no self-arrow, so
@@ -212,8 +232,34 @@ def load_gl_file(conn, schema: str, tenant_id: str, entity_id: int, file_name: s
 
     periods = sorted({f'{r["voucher_date"].year:04d}-{r["voucher_date"].month:02d}' for r in staged.valid_rows})
     result.periods_touched = periods
+
+    # Every trial balance result is recorded, and every failure has raised its
+    # blocking exception, BEFORE _validate_loaded_periods runs. corpus/09
+    # section 5 gates OPEN -> VALIDATED on "all blocking checks pass", read
+    # off the exception queue -- a check that wrote its exception after that
+    # gate would let the period validate and only then learn it should not
+    # have, and nothing walks a period backwards silently (section 5).
+    #
+    # The reconciliation_run row is written for a tie as well as a failure:
+    # corpus/04 grains the table as "result of EACH reconciliation check per
+    # period", and a check that only records itself when it fails cannot tell
+    # "passed" apart from "never ran".
+    #
+    # Reloading a period that still does not tie raises the exception again
+    # rather than deduplicating against the open one. Deliberate, and it is
+    # what invariant #8 means: accepting an exception does not make a trial
+    # balance tie, so accepting one and re-uploading the same broken export
+    # must not be a way past a zero tolerance. Each row carries its own
+    # load_run_id, so the versions are attributable rather than anonymous.
+    mapping_version_id = get_placeholder_mapping_version(conn, schema, tenant_id, entity_id)
     for period_key in periods:
-        result.tb_results.append(check_trial_balance(conn, schema, tenant_id, period_key))
+        tb = check_trial_balance(conn, schema, tenant_id, period_key)
+        result.tb_results.append(tb)
+        write_reconciliation_run(conn, schema, tenant_id, entity_id, mapping_version_id,
+                                    "trial_balance", as_reconciliation_result(tb), triggered_by,
+                                    tolerance_pct=TRIAL_BALANCE_TOLERANCE_PCT)
+        if tb.blocking:
+            write_exceptions(conn, schema, tenant_id, entity_id, [imbalance_exception(tb)], load_run_id)
 
     result.period_transitions = _validate_loaded_periods(conn, schema, tenant_id, entity_id, periods)
 
