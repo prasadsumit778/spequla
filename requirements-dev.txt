@@ -2,4 +2,3 @@
 # the production Docker image (Dockerfile installs requirements.txt only).
 -r requirements.txt
 pytest
-sqlparse

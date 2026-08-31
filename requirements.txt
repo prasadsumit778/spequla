@@ -7,3 +7,8 @@ python-multipart
 boto3
 workos
 pyjwt[crypto]
+# Admission gate 1/2/3/4/7 parse the compiled SQL rather than pattern-match it
+# (src/semantic/admission.py, corpus/07 section 7). Moved out of
+# requirements-dev.txt 2026-08-31: it is imported by production code now, and
+# the Dockerfile installs this file only.
+sqlparse
