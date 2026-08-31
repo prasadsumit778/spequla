@@ -73,6 +73,7 @@ from decimal import Decimal
 
 from src.quality.books_to_bank import latest_reconciliation_run_id
 from src.quality.trial_balance import check_trial_balance
+from src.semantic.statements import ExecutedStatement
 
 STATES = ("open", "validated", "mapped", "reconciled", "locked", "restated")
 
@@ -146,16 +147,22 @@ class ReconciledPeriod:
     reconciliation_run_id: int
 
 
-def get_current_period_lock(conn, schema: str, tenant_id: str, entity_id: int, period_key: str) -> PeriodLockRow | None:
+def get_current_period_lock(conn, schema: str, tenant_id: str, entity_id: int, period_key: str,
+                               statement_log: list[ExecutedStatement] | None = None) -> PeriodLockRow | None:
+    """`statement_log`, when passed, collects this read into the caller's
+    record of what reached Postgres (src/semantic/statements.py). The Ask
+    surface's data_health intent passes one, because this row is part of the
+    answer that intent returns rather than a gate in front of it. Default
+    None leaves the period gate and the transition paths unchanged."""
+    sql = (f'SELECT lock_id, status, snapshot_at, mapping_version_id, locked_by, locked_at, '
+              f'       restated_from, restatement_reason '
+              f'FROM "{schema}".period_lock '
+              f'WHERE tenant_id = %s AND entity_id = %s AND period_key = %s '
+              f'ORDER BY lock_id DESC LIMIT 1')
+    if statement_log is not None:
+        statement_log.append(ExecutedStatement(sql, (f'"{schema}".period_lock',), gated=True))
     with conn.cursor() as cur:
-        cur.execute(
-            f'SELECT lock_id, status, snapshot_at, mapping_version_id, locked_by, locked_at, '
-            f'       restated_from, restatement_reason '
-            f'FROM "{schema}".period_lock '
-            f'WHERE tenant_id = %s AND entity_id = %s AND period_key = %s '
-            f'ORDER BY lock_id DESC LIMIT 1',
-            (tenant_id, entity_id, period_key),
-        )
+        cur.execute(sql, (tenant_id, entity_id, period_key))
         row = cur.fetchone()
     if row is None:
         return None

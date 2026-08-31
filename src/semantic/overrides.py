@@ -18,6 +18,8 @@ from datetime import date
 from decimal import Decimal
 from typing import Any
 
+from src.semantic.statements import ExecutedStatement
+
 
 @dataclass
 class ResolvedParameters:
@@ -28,15 +30,17 @@ class ResolvedParameters:
 
 
 def _fetch_approved_definition(conn, schema: str, tenant_id: str, metric_id: str,
-                                  entity_id: int | None, as_of: date) -> tuple[dict, int, str] | None:
+                                  entity_id: int | None, as_of: date,
+                                  statement_log: list[ExecutedStatement] | None = None,
+                                  ) -> tuple[dict, int, str] | None:
+    sql = (f'SELECT parameters, version_no, approved_by FROM "{schema}".metric_definition '
+              f"WHERE tenant_id = %s AND metric_id = %s AND entity_id IS NOT DISTINCT FROM %s "
+              f"AND status = 'approved' AND effective_from <= %s AND effective_to > %s "
+              f'ORDER BY version_no DESC LIMIT 1')
+    if statement_log is not None:
+        statement_log.append(ExecutedStatement(sql, (f'"{schema}".metric_definition',), gated=False))
     with conn.cursor() as cur:
-        cur.execute(
-            f'SELECT parameters, version_no, approved_by FROM "{schema}".metric_definition '
-            f"WHERE tenant_id = %s AND metric_id = %s AND entity_id IS NOT DISTINCT FROM %s "
-            f"AND status = 'approved' AND effective_from <= %s AND effective_to > %s "
-            f'ORDER BY version_no DESC LIMIT 1',
-            (tenant_id, metric_id, entity_id, as_of, as_of),
-        )
+        cur.execute(sql, (tenant_id, metric_id, entity_id, as_of, as_of))
         row = cur.fetchone()
     if row is None:
         return None
@@ -44,16 +48,25 @@ def _fetch_approved_definition(conn, schema: str, tenant_id: str, metric_id: str
 
 
 def resolve_parameters(conn, schema: str, tenant_id: str, metric_id: str, entity_id: int,
-                         as_of: date, global_default: dict[str, Any]) -> ResolvedParameters:
+                         as_of: date, global_default: dict[str, Any],
+                         statement_log: list[ExecutedStatement] | None = None) -> ResolvedParameters:
     """Walks entity_override -> company_override -> global_default. Returns
     the full effective parameter set: the global default merged with
-    whichever override layer matched, override values winning per key."""
-    entity_row = _fetch_approved_definition(conn, schema, tenant_id, metric_id, entity_id, as_of)
+    whichever override layer matched, override values winning per key.
+
+    `statement_log`, when passed, collects the statements this walk issues
+    into the caller's record of what reached Postgres (src/semantic/
+    statements.py). Recorded with gated=False: this resolves WHICH
+    definition to compile against, ahead of the compiled query itself, and
+    it reads `metric_definition` -- a table admission.py's FORBIDDEN_TABLES
+    names. That boundary is drawn and justified in statements.py's
+    docstring. Default None leaves every non-Ask caller unchanged."""
+    entity_row = _fetch_approved_definition(conn, schema, tenant_id, metric_id, entity_id, as_of, statement_log)
     if entity_row is not None:
         params, version, approved_by = entity_row
         return ResolvedParameters({**global_default, **params}, "entity_override", version, approved_by)
 
-    company_row = _fetch_approved_definition(conn, schema, tenant_id, metric_id, None, as_of)
+    company_row = _fetch_approved_definition(conn, schema, tenant_id, metric_id, None, as_of, statement_log)
     if company_row is not None:
         params, version, approved_by = company_row
         return ResolvedParameters({**global_default, **params}, "company_override", version, approved_by)

@@ -15,6 +15,8 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 
+from src.semantic.statements import ExecutedStatement
+
 
 class NoApprovedMappingError(Exception):
     """corpus/06 section 6 rule 1: 'Metrics do not unlock until version 1 is
@@ -22,14 +24,20 @@ class NoApprovedMappingError(Exception):
 
 
 def resolve_mapping_version_for_period(conn, schema: str, tenant_id: str, entity_id: int,
-                                          period_end: date) -> int:
+                                          period_end: date,
+                                          statement_log: list[ExecutedStatement] | None = None) -> int:
+    """`statement_log`, when passed, collects this lookup into the caller's
+    record of what reached Postgres (src/semantic/statements.py). Recorded
+    with gated=False: resolving WHICH mapping version governs the period is
+    an input to compilation, ahead of the compiled query admission control
+    covers. Default None leaves every non-Ask caller unchanged."""
+    sql = (f'SELECT mapping_version_id FROM "{schema}".mapping_version '
+              f"WHERE tenant_id = %s AND entity_id = %s AND status = 'approved' "
+              f'AND effective_from <= %s AND effective_to > %s')
+    if statement_log is not None:
+        statement_log.append(ExecutedStatement(sql, (f'"{schema}".mapping_version',), gated=False))
     with conn.cursor() as cur:
-        cur.execute(
-            f'SELECT mapping_version_id FROM "{schema}".mapping_version '
-            f"WHERE tenant_id = %s AND entity_id = %s AND status = 'approved' "
-            f'AND effective_from <= %s AND effective_to > %s',
-            (tenant_id, entity_id, period_end, period_end),
-        )
+        cur.execute(sql, (tenant_id, entity_id, period_end, period_end))
         row = cur.fetchone()
     if not row:
         raise NoApprovedMappingError(

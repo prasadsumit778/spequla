@@ -37,6 +37,7 @@ from src.semantic.formula import (
     match_gl_classes,
 )
 from src.semantic.overrides import resolve_parameters
+from src.semantic.statements import ExecutedStatement, distinct_statements
 
 
 def period_bounds(period_key: str) -> tuple[date, date]:
@@ -63,6 +64,14 @@ class CompiledMetric:
     time_logic: str | None = None
     load_run_ids: set[int] = field(default_factory=set)  # which uploads back this value -- citation.py's source_files
     mapping_version_no: int | None = None  # the mapping_version.version_no that classified the facts, for citation.py
+    # Every statement this compile sent to Postgres, deduplicated by SQL
+    # text, in execution order -- the record corpus/07 section 7's admission
+    # gates inspect. See src/semantic/statements.py for what `gated` marks
+    # and what is deliberately not recorded. Empty when nothing ran: a
+    # decision-gated metric returns before any query is issued, and
+    # reporting SQL for a query that never happened is exactly the class of
+    # fiction this field replaced.
+    executed_sql: list[ExecutedStatement] = field(default_factory=list)
 
 
 # D-028's resolved text (corpus/00 section 2b): "Period-end AR, net revenue,
@@ -89,7 +98,8 @@ DIO_DEFAULT_DAYS_BASIS = 365
 
 def _trailing_twelve_months_value(conn, schema: str, tenant_id: str, entity_id: int, metric_id: str,
                                     period_key: str, config: ConfigRegistry,
-                                    _cache: dict[tuple[str, str], "CompiledMetric"]) -> Decimal:
+                                    _cache: dict[tuple[str, str], "CompiledMetric"],
+                                    _executed: list[ExecutedStatement]) -> Decimal:
     """Sum of metric_id's period_sum value over the trailing twelve calendar
     months ending at (and including) period_key. D-028/D-030/D-031 (corpus/00)
     resolve dso/dpo/dio's days_basis to 365 -- that convention only measures
@@ -100,7 +110,13 @@ def _trailing_twelve_months_value(conn, schema: str, tenant_id: str, entity_id: 
     end: DIO compiled at 843 days against a balance that is genuinely ~2.3
     months of monthly COGS). Months with no resolvable value (before the
     entity's first ingested period) contribute zero -- a rolling trailing
-    window, not a requirement that 12 full months of history exist."""
+    window, not a requirement that 12 full months of history exist.
+
+    `_executed` collects each month's statements into the caller's record.
+    Twelve months of a metric closure is where one Ask question issues the
+    most SQL by far, and the point of that record is that it describes
+    everything that ran, not a sample of it. distinct_statements collapses
+    them: the twelve differ in bound parameters, not in text."""
     year, month = (int(x) for x in period_key.split("-"))
     total = Decimal("0")
     for i in range(12):
@@ -109,6 +125,7 @@ def _trailing_twelve_months_value(conn, schema: str, tenant_id: str, entity_id: 
             m += 12
             y -= 1
         result = _compile_metric_cached(conn, schema, tenant_id, entity_id, metric_id, f"{y:04d}-{m:02d}", config, _cache)
+        _executed.extend(result.executed_sql)
         if result.status == "ok" and result.value is not None:
             total += result.value
     return total
@@ -144,51 +161,72 @@ def transitive_blocking_decisions(metric_id: str, config: ConfigRegistry,
     return out
 
 
+def leaf_amount_statements(schema: str, class_count: int, time_logic: str) -> tuple[str, str, tuple[str, ...]]:
+    """The two statements _fetch_leaf_amounts sends to Postgres, and the
+    tables they read -- built without sending them.
+
+    Split out of _fetch_leaf_amounts on 2026-08-31 so corpus/07 section 7's
+    admission gates inspect the exact text that will run. They previously
+    inspected src/semantic/ask_compiler.py's `_representative_gl_class_sql`,
+    a separate hand-maintained string whose docstring claimed to mirror this
+    query shape "exactly" -- a claim no test asserted and no code path
+    checked, over a string that was never the one Postgres received. There
+    is now one builder and one caller of it, so the two cannot diverge.
+
+    `class_count` rather than the classes themselves: the SQL text depends
+    only on how many placeholders the IN list needs. The values are bound
+    parameters and never enter the string (CLAUDE.md invariant 1 -- the
+    compiler emits SQL, and it emits it parameterised)."""
+    placeholders = ",".join(["%s"] * class_count)
+    date_filter = "fg.event_date <= %s" if time_logic == "period_end" \
+        else "fg.event_date BETWEEN %s AND %s"  # period_sum: flow within the period
+    scan = (
+        f'FROM "{schema}".fact_gl_entry fg '
+        f'JOIN "{schema}".dim_account da ON da.account_key = fg.account_key '
+        f'JOIN "{schema}".map_account ma ON ma.mapping_version_id = %s AND ma.source_record_id = da.source_record_id '
+        f'WHERE fg.tenant_id = %s AND fg.entity_id = %s AND fg.is_current '
+        f'AND ma.canonical_class IN ({placeholders}) AND {date_filter}'
+    )
+    amounts_sql = (f'SELECT ma.canonical_class, SUM(fg.amount_base), COUNT(*) {scan} '
+                      f'GROUP BY ma.canonical_class')
+    load_runs_sql = f'SELECT DISTINCT fg.load_run_id {scan}'
+    tables = (f'"{schema}".fact_gl_entry', f'"{schema}".dim_account', f'"{schema}".map_account')
+    return amounts_sql, load_runs_sql, tables
+
+
 def _fetch_leaf_amounts(conn, schema: str, tenant_id: str, entity_id: int, mapping_version_id: int,
                            classes: list[str], time_logic: str,
-                           period_start: date, period_end: date) -> tuple[dict[str, Decimal], int, set[int]]:
-    """Amount per canonical class, the row count, and the set of load_run_ids
-    backing it, scoped to exactly the classes this metric's formula
-    references -- narrower than src/reports/query.py's
-    class_balances/class_movements (which fetch every class at once for
-    statement assembly), because a citation's row_count and source_files
-    must describe only the rows that produced THIS metric's value."""
+                           period_start: date, period_end: date,
+                           ) -> tuple[dict[str, Decimal], int, set[int], list[ExecutedStatement]]:
+    """Amount per canonical class, the row count, the set of load_run_ids
+    backing it, and the statements that produced all three -- scoped to
+    exactly the classes this metric's formula references, narrower than
+    src/reports/query.py's class_balances/class_movements (which fetch every
+    class at once for statement assembly), because a citation's row_count
+    and source_files must describe only the rows that produced THIS metric's
+    value.
+
+    These two are the compiled query in corpus/07 section 2's sense: stage
+    6's output, executed at stage 8, and the statements admission control
+    covers (`gated=True`)."""
     if not classes:
-        return {}, 0, set()
-    placeholders = ",".join(["%s"] * len(classes))
-    if time_logic == "period_end":
-        date_filter = "fg.event_date <= %s"
-        date_params: tuple = (period_end,)
-    else:  # period_sum: flow within the period
-        date_filter = "fg.event_date BETWEEN %s AND %s"
-        date_params = (period_start, period_end)
+        return {}, 0, set(), []
+    amounts_sql, load_runs_sql, tables = leaf_amount_statements(schema, len(classes), time_logic)
+    date_params: tuple = (period_end,) if time_logic == "period_end" else (period_start, period_end)
+    params = (mapping_version_id, tenant_id, entity_id, *classes, *date_params)
+    executed: list[ExecutedStatement] = []
 
     with conn.cursor() as cur:
-        cur.execute(
-            f'SELECT ma.canonical_class, SUM(fg.amount_base), COUNT(*) '
-            f'FROM "{schema}".fact_gl_entry fg '
-            f'JOIN "{schema}".dim_account da ON da.account_key = fg.account_key '
-            f'JOIN "{schema}".map_account ma ON ma.mapping_version_id = %s AND ma.source_record_id = da.source_record_id '
-            f'WHERE fg.tenant_id = %s AND fg.entity_id = %s AND fg.is_current '
-            f'AND ma.canonical_class IN ({placeholders}) AND {date_filter} '
-            f'GROUP BY ma.canonical_class',
-            (mapping_version_id, tenant_id, entity_id, *classes, *date_params),
-        )
+        executed.append(ExecutedStatement(amounts_sql, tables, gated=True))
+        cur.execute(amounts_sql, params)
         rows = cur.fetchall()
         amounts = {r[0]: r[1] for r in rows}
         row_count = sum(r[2] for r in rows)
 
-        cur.execute(
-            f'SELECT DISTINCT fg.load_run_id '
-            f'FROM "{schema}".fact_gl_entry fg '
-            f'JOIN "{schema}".dim_account da ON da.account_key = fg.account_key '
-            f'JOIN "{schema}".map_account ma ON ma.mapping_version_id = %s AND ma.source_record_id = da.source_record_id '
-            f'WHERE fg.tenant_id = %s AND fg.entity_id = %s AND fg.is_current '
-            f'AND ma.canonical_class IN ({placeholders}) AND {date_filter}',
-            (mapping_version_id, tenant_id, entity_id, *classes, *date_params),
-        )
+        executed.append(ExecutedStatement(load_runs_sql, tables, gated=True))
+        cur.execute(load_runs_sql, params)
         load_run_ids = {r[0] for r in cur.fetchall()}
-    return amounts, row_count, load_run_ids
+    return amounts, row_count, load_run_ids, executed
 
 
 def compile_metric(conn, schema: str, tenant_id: str, entity_id: int, metric_id: str,
@@ -221,6 +259,13 @@ def _compile_metric_cached(conn, schema: str, tenant_id: str, entity_id: int, me
     if cache_key in _cache:
         return _cache[cache_key]
     result = _compile_metric_impl(conn, schema, tenant_id, entity_id, metric_id, period_key, config, _cache)
+    # Deduplicated here, at the single exit every one of _compile_metric_impl's
+    # eight return paths passes through, rather than at each of them. The
+    # duplicates are real and ordinary: resolve_parameters issues the same
+    # statement text twice (entity override, then company override), and
+    # every metric in a closure resolves its own mapping version with the
+    # same text as its siblings.
+    result.executed_sql = distinct_statements(result.executed_sql)
     _cache[cache_key] = result
     return result
 
@@ -259,21 +304,33 @@ def _compile_metric_impl(conn, schema: str, tenant_id: str, entity_id: int, metr
         name: (spec.get("default") if isinstance(spec, dict) else spec)
         for name, spec in _raw_params.items()
     }
+    # `executed` is this compile's record of what reached Postgres, and is
+    # the same list object as out.executed_sql throughout -- appended to as
+    # each statement runs, so an exception on the way out still leaves the
+    # caller holding an accurate partial record rather than nothing.
+    executed: list[ExecutedStatement] = out.executed_sql
     resolved = resolve_parameters(conn, schema, tenant_id, metric_id, entity_id, period_end,
-                                     global_default=global_default_params)
+                                     global_default=global_default_params, statement_log=executed)
     out.definition_source = resolved.source
     out.parameters_used = resolved.parameters
     if resolved.definition_version is not None:
         out.metric_version = resolved.definition_version
 
     try:
-        mapping_version_id = resolve_mapping_version_for_period(conn, schema, tenant_id, entity_id, period_end)
+        mapping_version_id = resolve_mapping_version_for_period(conn, schema, tenant_id, entity_id, period_end,
+                                                                     statement_log=executed)
     except NoApprovedMappingError as e:
         out.reason = str(e)
         return out
+    version_no_sql = f'SELECT version_no FROM "{schema}".mapping_version WHERE mapping_version_id = %s'
+    # gated=False, with resolve_parameters and resolve_mapping_version_for_period
+    # above: these resolve WHICH definition and WHICH mapping version to
+    # compile against. They are corpus/07 stage 6 inputs, not the compiled
+    # query -- see src/semantic/statements.py for where that boundary is
+    # drawn and what it deliberately leaves outside admission control.
+    executed.append(ExecutedStatement(version_no_sql, (f'"{schema}".mapping_version',), gated=False))
     with conn.cursor() as cur:
-        cur.execute(f'SELECT version_no FROM "{schema}".mapping_version WHERE mapping_version_id = %s',
-                     (mapping_version_id,))
+        cur.execute(version_no_sql, (mapping_version_id,))
         out.mapping_version_no = cur.fetchone()[0]
 
     if not reg.dependencies:
@@ -288,9 +345,10 @@ def _compile_metric_impl(conn, schema: str, tenant_id: str, entity_id: int, metr
         except FormulaError as e:
             out.reason = str(e)
             return out
-        amounts, row_count, load_run_ids = _fetch_leaf_amounts(conn, schema, tenant_id, entity_id,
-                                                                    mapping_version_id, all_classes, reg.time_logic,
-                                                                    period_start, period_end)
+        amounts, row_count, load_run_ids, leaf_statements = _fetch_leaf_amounts(
+            conn, schema, tenant_id, entity_id, mapping_version_id, all_classes, reg.time_logic,
+            period_start, period_end)
+        executed.extend(leaf_statements)
         try:
             value = eval_gl_class_formula(reg.formula, amounts, known_classes)
         except FormulaError as e:
@@ -306,6 +364,15 @@ def _compile_metric_impl(conn, schema: str, tenant_id: str, entity_id: int, metr
         dep_id: _compile_metric_cached(conn, schema, tenant_id, entity_id, dep_id, period_key, config, _cache)
         for dep_id in reg.dependencies
     }
+    # A derived metric is a tree of leaf queries, not one query, and its
+    # record is the union of the tree's -- the fact ask_compiler.py's module
+    # docstring already stated and `_representative_gl_class_sql` then
+    # papered over by handing the gates a single leaf's shape. Extended
+    # before the `unusable` check below so an unresolved dependency still
+    # reports the SQL that ran on the way to finding that out.
+    for dep in dep_results.values():
+        executed.extend(dep.executed_sql)
+
     unusable = {k: v for k, v in dep_results.items() if v.status != "ok"}
     if unusable:
         first = next(iter(unusable.values()))
@@ -339,18 +406,18 @@ def _compile_metric_impl(conn, schema: str, tenant_id: str, entity_id: int, metr
         days_basis = out.parameters_used.get("days_basis", DSO_DEFAULT_DAYS_BASIS)
         formula = f"metric.accounts_receivable / metric.{revenue_base} * {days_basis}"
         values[revenue_base] = _trailing_twelve_months_value(
-            conn, schema, tenant_id, entity_id, revenue_base, period_key, config, _cache)
+            conn, schema, tenant_id, entity_id, revenue_base, period_key, config, _cache, executed)
     elif metric_id == "dpo":
         cost_base = out.parameters_used.get("cost_base", DPO_DEFAULT_COST_BASE)
         days_basis = out.parameters_used.get("days_basis", DPO_DEFAULT_DAYS_BASIS)
         formula = f"metric.accounts_payable / metric.{cost_base} * {days_basis}"
         values[cost_base] = _trailing_twelve_months_value(
-            conn, schema, tenant_id, entity_id, cost_base, period_key, config, _cache)
+            conn, schema, tenant_id, entity_id, cost_base, period_key, config, _cache, executed)
     elif metric_id == "dio":
         days_basis = out.parameters_used.get("days_basis", DIO_DEFAULT_DAYS_BASIS)
         formula = f"metric.inventory / metric.cogs * {days_basis}"
         values["cogs"] = _trailing_twelve_months_value(
-            conn, schema, tenant_id, entity_id, "cogs", period_key, config, _cache)
+            conn, schema, tenant_id, entity_id, "cogs", period_key, config, _cache, executed)
 
     try:
         out.value = eval_metric_formula(formula, values)

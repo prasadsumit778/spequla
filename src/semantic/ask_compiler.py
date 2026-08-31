@@ -6,19 +6,24 @@ value is needed -- that function already implements the transitive
 dependency-gate, the override chain and the mapping-approval gate (Sprint
 3), and this module does not duplicate any of that. What THIS module adds
 is specific to the Ask surface: turning a validated IRRequest into
-(a) representative SQL text a human or the admission gates can actually
-read, and (b) an AskResult carrying whichever of ok / blocked / unavailable
-/ error actually describes what happened, for each of corpus/07 section 4's
-twelve intents.
+(a) the record of what compiling it actually sent to Postgres, which the
+admission gates and the "view SQL" panel both read, and (b) an AskResult
+carrying whichever of ok / blocked / unavailable / error actually describes
+what happened, for each of corpus/07 section 4's twelve intents.
 
 A derived metric like ebitda is not "one query" in any literal sense --
 compile_metric resolves it as a small tree of leaf queries composed in
-Python. The SQL text this module produces for such a metric is the leaf
-query for corpus/07's own worked example shape (a gl_class aggregate), not
-a literal transcript of every query compile_metric ran -- an honest
-architectural fact stated here rather than glossed over, since corpus/07
-section 7's admission gates are written assuming one query per compiled
-request.
+Python. ebitda is eight metric nodes and five leaves; dso, dpo and dio
+recompile their base metric over twelve trailing months on top of that.
+Until 2026-08-31 this module answered that by keeping
+`_representative_gl_class_sql`, a hand-maintained string whose docstring
+claimed to mirror compiler.py's `_fetch_leaf_amounts` "exactly" -- one
+invented statement standing in for dozens of real ones, checked by nothing.
+The gates read the copy and Postgres read the original, so any divergence
+between them was invisible by construction. That function is gone.
+compile_metric now returns every statement it ran
+(CompiledMetric.executed_sql, src/semantic/statements.py) and the gates run
+against those, one gate pass per statement.
 """
 from __future__ import annotations
 
@@ -39,8 +44,13 @@ from src.semantic.bridges import (
     not_configured,
 )
 from src.semantic.compiler import CompiledMetric, compile_metric, period_bounds
-from src.semantic.formula import find_gl_class_patterns, match_gl_classes
 from src.semantic.ir import IRRequest
+from src.semantic.statements import (
+    ExecutedStatement,
+    distinct_statements,
+    joined_sql,
+    referenced_tables,
+)
 from src.semantic.refusal import Refusal, refusal_for_unreportable_period
 
 UNAVAILABLE_DIMENSIONS = {
@@ -55,6 +65,14 @@ UNAVAILABLE_DIMENSIONS = {
 class AskResult:
     status: str  # 'ok' | 'refused' | 'blocked' | 'unavailable' | 'error'
     intent: str
+    # Every statement this question sent to Postgres, deduplicated, in
+    # execution order. This is what corpus/07 section 7's gates inspect --
+    # per statement, on the text `cursor.execute` received. `sql_text` is
+    # the same list rendered as one string for app.query_log's sql_text
+    # column and corpus/08 section 2's "view SQL" panel, and
+    # `tables_referenced` is the union of what those statements read,
+    # informational only: the gates read each statement's own tables.
+    executed_sql: list[ExecutedStatement] = field(default_factory=list)
     sql_text: str | None = None
     tables_referenced: list[str] = field(default_factory=list)
     value: object = None
@@ -73,23 +91,26 @@ class AskResult:
     refusal: Refusal | None = None
 
 
-def _representative_gl_class_sql(schema: str, metric_id: str, formula: str, known_classes: list[str],
-                                    time_logic: str) -> tuple[str, list[str]]:
-    """The SQL text corpus/07's admission gates actually inspect, for a leaf
-    gl_class metric. Mirrors src/semantic/compiler.py's _fetch_leaf_amounts
-    query shape exactly, so what the gates see is what would really run."""
-    patterns = find_gl_class_patterns(formula)
-    classes = sorted({c for p in patterns for c in match_gl_classes(p, known_classes)}) if patterns else []
-    date_filter = "fg.event_date <= %s" if time_logic == "period_end" else "fg.event_date BETWEEN %s AND %s"
-    sql = (
-        f'SELECT ma.canonical_class, SUM(fg.amount_base) '
-        f'FROM "{schema}".fact_gl_entry fg '
-        f'JOIN "{schema}".dim_account da ON da.account_key = fg.account_key '
-        f'JOIN "{schema}".map_account ma ON ma.mapping_version_id = %s AND ma.source_record_id = da.source_record_id '
-        f'WHERE fg.tenant_id = %s AND fg.entity_id = %s AND fg.is_current '
-        f'AND ma.canonical_class = ANY(%s) AND {date_filter}'
-    )
-    return sql, [f'"{schema}".fact_gl_entry', f'"{schema}".dim_account', f'"{schema}".map_account']
+def _sql_fields(*statements: ExecutedStatement | list[ExecutedStatement] | CompiledMetric) -> dict:
+    """The three SQL fields of an AskResult, built from what actually ran.
+
+    Takes CompiledMetrics, statement lists, or single statements, in the
+    order they were executed, and flattens them into one deduplicated
+    record. Every intent that touches the database builds its AskResult
+    through this, so no intent can report SQL it did not run, and none can
+    run SQL it does not report -- which is the whole difference between this
+    and the `_representative_gl_class_sql` it replaced."""
+    flat: list[ExecutedStatement] = []
+    for item in statements:
+        if isinstance(item, CompiledMetric):
+            flat.extend(item.executed_sql)
+        elif isinstance(item, ExecutedStatement):
+            flat.append(item)
+        else:
+            flat.extend(item)
+    distinct = distinct_statements(flat)
+    return {"executed_sql": distinct, "sql_text": joined_sql(distinct),
+              "tables_referenced": referenced_tables(distinct)}
 
 
 def compile_and_execute(conn, schema: str, tenant_id: str, entity_id: int, ir: IRRequest,
@@ -149,18 +170,17 @@ def _metric_value(conn, schema, tenant_id, entity_id, ir: IRRequest, config: Con
     period_key = _period_key_from_ir(ir)
     if refused := _refuse_unreportable(conn, schema, tenant_id, entity_id, ir.intent, period_key):
         return refused
-    contract = config.metrics[ir.metric]
-    known_classes = [c.class_ for c in config.taxonomy]
-    sql_text, tables = _representative_gl_class_sql(schema, ir.metric, contract.registry.formula,
-                                                        known_classes, contract.registry.time_logic)
-
     result = compile_metric(conn, schema, tenant_id, entity_id, ir.metric, period_key, config)
+    # A decision-gated metric returns before it issues a single statement,
+    # so its record is empty and sql_text is None. That is the honest
+    # answer: the previous code reported a query for a question that never
+    # reached the database.
     if result.status != "ok":
         return AskResult(status="blocked" if result.status == "blocked" else "unavailable", intent=ir.intent,
-                            sql_text=sql_text, tables_referenced=tables, reason=result.reason,
-                            blocking_decisions=result.blocking_decisions, compiled_metric=result)
-    return AskResult(status="ok", intent=ir.intent, sql_text=sql_text, tables_referenced=tables,
-                        value=result.value, compiled_metric=result, row_count=result.row_count)
+                            reason=result.reason, blocking_decisions=result.blocking_decisions,
+                            compiled_metric=result, **_sql_fields(result))
+    return AskResult(status="ok", intent=ir.intent, value=result.value, compiled_metric=result,
+                        row_count=result.row_count, **_sql_fields(result))
 
 
 def _metric_trend(conn, schema, tenant_id, entity_id, ir: IRRequest, config: ConfigRegistry, tenant_profile: str = "manufacturing") -> AskResult:
@@ -188,12 +208,17 @@ def _metric_trend(conn, schema, tenant_id, entity_id, ir: IRRequest, config: Con
     series = []
     last_result = None
     last_refusal: Refusal | None = None
+    # Every month's statements, not the last month's. A twelve-month trend is
+    # twelve compiles, and reporting one of them as though it were the query
+    # is the same substitution `_representative_gl_class_sql` made.
+    executed: list[ExecutedStatement] = []
     for pk in period_keys:
         if refused := _refuse_unreportable(conn, schema, tenant_id, entity_id, ir.intent, pk):
             last_refusal = refused.refusal
             series.append({"period": pk, "status": "refused", "value": None, "reason": refused.reason})
             continue
         r = compile_metric(conn, schema, tenant_id, entity_id, ir.metric, pk, config)
+        executed.extend(r.executed_sql)
         last_result = r
         series.append({"period": pk, "status": r.status, "value": str(r.value) if r.value is not None else None,
                           "reason": r.reason})
@@ -205,11 +230,12 @@ def _metric_trend(conn, schema, tenant_id, entity_id, ir: IRRequest, config: Con
         # unmapped value -- and `series` carries the per-month detail behind
         # it, rather than inventing a status for the window as a whole.
         return AskResult(status="refused", intent=ir.intent, series=series,
-                            reason=series[-1]["reason"], refusal=last_refusal)
+                            reason=series[-1]["reason"], refusal=last_refusal, **_sql_fields(executed))
     return AskResult(status="ok" if any_ok else (last_result.status if last_result else "error"),
                         intent=ir.intent, series=series,
                         reason=None if any_ok else (last_result.reason if last_result else None),
-                        blocking_decisions=last_result.blocking_decisions if last_result and not any_ok else [])
+                        blocking_decisions=last_result.blocking_decisions if last_result and not any_ok else [],
+                        **_sql_fields(executed))
 
 
 def _metric_comparison(conn, schema, tenant_id, entity_id, ir: IRRequest, config: ConfigRegistry, tenant_profile: str = "manufacturing") -> AskResult:
@@ -220,17 +246,19 @@ def _metric_comparison(conn, schema, tenant_id, entity_id, ir: IRRequest, config
     if current.status != "ok":
         return AskResult(status="blocked" if current.status == "blocked" else "unavailable", intent=ir.intent,
                             reason=current.reason, blocking_decisions=current.blocking_decisions,
-                            compiled_metric=current)
+                            compiled_metric=current, **_sql_fields(current))
 
     if ir.compare_to is None:
-        return AskResult(status="error", intent=ir.intent, reason="metric_comparison requires compare_to")
+        return AskResult(status="error", intent=ir.intent, reason="metric_comparison requires compare_to",
+                            **_sql_fields(current))
     y, m = (int(p) for p in period_key.split("-"))
     if ir.compare_to.type in ("prior_period", "mom"):
         cy, cm = (y, m - 1) if m > 1 else (y - 1, 12)
     elif ir.compare_to.type == "yoy":
         cy, cm = y - 1, m
     else:
-        return AskResult(status="error", intent=ir.intent, reason=f"unsupported compare_to {ir.compare_to.type!r}")
+        return AskResult(status="error", intent=ir.intent,
+                            reason=f"unsupported compare_to {ir.compare_to.type!r}", **_sql_fields(current))
     compare_key = f"{cy:04d}-{cm:02d}"
 
     # The comparison period is gated too, but reports its state in place
@@ -238,19 +266,21 @@ def _metric_comparison(conn, schema, tenant_id, entity_id, ir: IRRequest, config
     # period's number, and the payload already carries a status/reason for
     # the comparison half. What it must never do is put a number there for a
     # period that may not be read.
+    executed: list[ExecutedStatement] = list(current.executed_sql)
     compare_refused = _refuse_unreportable(conn, schema, tenant_id, entity_id, ir.intent, compare_key)
     if compare_refused is not None:
         compare_cell = {"period": compare_key, "value": None, "status": "refused",
                           "reason": compare_refused.reason}
     else:
         compare = compile_metric(conn, schema, tenant_id, entity_id, ir.metric, compare_key, config)
+        executed.extend(compare.executed_sql)
         compare_cell = {"period": compare_key, "value": str(compare.value) if compare.status == "ok" else None,
                           "status": compare.status, "reason": compare.reason}
 
     return AskResult(
         status="ok", intent=ir.intent,
         value={"current": {"period": period_key, "value": str(current.value)}, "compare": compare_cell},
-        compiled_metric=current,
+        compiled_metric=current, **_sql_fields(executed),
     )
 
 
@@ -294,6 +324,17 @@ def _statement_view(conn, schema, tenant_id, entity_id, ir: IRRequest, config: C
                                             period_start, period_end)
     bs = assemble_balance_sheet(conn, schema, tenant_id, entity_id, mapping_version_id, period_end)
 
+    # **No executed_sql, and therefore no admission gate.** Statement
+    # assembly reads through src/reports/{pnl,balance_sheet,query}.py, which
+    # do not record what they run, so this intent reaches Postgres with
+    # nothing in front of it -- as every intent did before 2026-08-31. The
+    # tables below are a declaration of intent, not a record of execution,
+    # and are kept only because the API already returns them; nothing gates
+    # on them. Threading the record through report assembly is a wider
+    # change than this one, because those functions are shared with the
+    # monthly pack and the overview tiles. Disclosed here and in
+    # src/semantic/statements.py rather than left for a reader to discover
+    # from the absence of a field.
     return AskResult(
         status="ok", intent=ir.intent,
         value={"pnl": {k: str(v) for k, v in pnl.lines.items()},
@@ -316,36 +357,45 @@ def _data_health(conn, schema, tenant_id, entity_id, ir: IRRequest, config: Conf
     reconciliation runs and the unmapped value -- the same three things the
     refusal itself states.
     """
+    executed: list[ExecutedStatement] = []
     if ir.period is not None:
         period_key = _period_key_from_ir(ir)
-        lock = get_current_period_lock(conn, schema, tenant_id, entity_id, period_key)
+        lock = get_current_period_lock(conn, schema, tenant_id, entity_id, period_key, statement_log=executed)
+        checks_sql = (f'SELECT check_type, status, residual_inr FROM "{schema}".reconciliation_run '
+                         f'WHERE tenant_id=%s AND entity_id=%s AND period_key=%s ORDER BY run_at DESC')
+        executed.append(ExecutedStatement(checks_sql, (f'"{schema}".reconciliation_run',), gated=True))
         with conn.cursor() as cur:
-            cur.execute(
-                f'SELECT check_type, status, residual_inr FROM "{schema}".reconciliation_run '
-                f'WHERE tenant_id=%s AND entity_id=%s AND period_key=%s ORDER BY run_at DESC',
-                (tenant_id, entity_id, period_key),
-            )
+            cur.execute(checks_sql, (tenant_id, entity_id, period_key))
             checks = [{"check_type": r[0], "status": r[1], "residual_inr": str(r[2])} for r in cur.fetchall()]
         return AskResult(status="ok", intent=ir.intent,
                             value={"period": period_key, "status": lock.status if lock else "open", "checks": checks},
-                            tables_referenced=[f'"{schema}".period_lock', f'"{schema}".reconciliation_run'])
+                            **_sql_fields(executed))
 
     try:
-        mapping_version_id = resolve_mapping_version_for_period(conn, schema, tenant_id, entity_id, date.today())
+        mapping_version_id = resolve_mapping_version_for_period(conn, schema, tenant_id, entity_id, date.today(),
+                                                                     statement_log=executed)
     except NoApprovedMappingError as e:
-        return AskResult(status="unavailable", intent=ir.intent, reason=str(e))
+        return AskResult(status="unavailable", intent=ir.intent, reason=str(e), **_sql_fields(executed))
+    # `AND tenant_id = %s` added 2026-08-31, when this statement first came
+    # under admission control and gate 4 rejected it: it scoped only by
+    # mapping_version_id, which IS tenant-scoped (and entity-scoped) through
+    # the mapping_version row resolved just above, but the tenant predicate
+    # corpus/07 section 7 gate 4 requires was nowhere in the text. The filter
+    # is a no-op against today's data by construction and is meant to stay
+    # one; what changed is that the query now says so. This is the first
+    # thing the gates caught that a reconstruction could not have -- the
+    # reconstruction was of a different statement entirely.
+    unmapped_sql = (f'SELECT COALESCE(SUM(period_value_inr), 0), '
+                       f"       COALESCE(SUM(period_value_inr) FILTER (WHERE canonical_class='suspense.unmapped'), 0) "
+                       f'FROM "{schema}".map_account WHERE mapping_version_id = %s AND tenant_id = %s')
+    executed.append(ExecutedStatement(unmapped_sql, (f'"{schema}".map_account',), gated=True))
     with conn.cursor() as cur:
-        cur.execute(
-            f'SELECT COALESCE(SUM(period_value_inr), 0), '
-            f"       COALESCE(SUM(period_value_inr) FILTER (WHERE canonical_class='suspense.unmapped'), 0) "
-            f'FROM "{schema}".map_account WHERE mapping_version_id = %s',
-            (mapping_version_id,),
-        )
+        cur.execute(unmapped_sql, (mapping_version_id, tenant_id))
         total, unmapped = cur.fetchone()
     pct = float(unmapped / total) if total else 0.0
     return AskResult(status="ok", intent=ir.intent,
                         value={"unmapped_pct": pct, "unmapped_value_inr": str(unmapped)},
-                        tables_referenced=[f'"{schema}".map_account'])
+                        **_sql_fields(executed))
 
 
 def _definition_lookup(conn, schema, tenant_id, entity_id, ir: IRRequest, config: ConfigRegistry, tenant_profile: str = "manufacturing") -> AskResult:
@@ -383,23 +433,29 @@ def _variance_explain(conn, schema, tenant_id, entity_id, ir: IRRequest, config:
     if current.status != "ok" or prior.status != "ok":
         blocked = current if current.status != "ok" else prior
         return AskResult(status="blocked" if blocked.status == "blocked" else "unavailable", intent=ir.intent,
-                            reason=blocked.reason, blocking_decisions=blocked.blocking_decisions)
+                            reason=blocked.reason, blocking_decisions=blocked.blocking_decisions,
+                            **_sql_fields(current, prior))
 
     if ir.metric == "ebitda":
         gp_current = compile_metric(conn, schema, tenant_id, entity_id, "gross_profit", period_key, config)
         gp_prior = compile_metric(conn, schema, tenant_id, entity_id, "gross_profit", prior_key, config)
         opex_current = compile_metric(conn, schema, tenant_id, entity_id, "opex", period_key, config)
         opex_prior = compile_metric(conn, schema, tenant_id, entity_id, "opex", prior_key, config)
+        # Six compiles across two periods -- the widest single Ask question
+        # in the build, and the clearest case for why the record is the
+        # union of a tree rather than one statement standing for it.
+        sql_fields = _sql_fields(current, prior, gp_current, gp_prior, opex_current, opex_prior)
         if any(r.status != "ok" for r in (gp_current, gp_prior, opex_current, opex_prior)):
             return AskResult(status="unavailable", intent=ir.intent,
-                                reason="gross_profit/opex breakdown unavailable for the bridge")
+                                reason="gross_profit/opex breakdown unavailable for the bridge", **sql_fields)
         bridge = compute_ebitda_bridge(gp_current.value - gp_prior.value,
                                           {"opex_total": opex_current.value - opex_prior.value},
                                           current.value - prior.value)
         return AskResult(status="ok", intent=ir.intent, bridge=bridge,
-                            value={"current": str(current.value), "prior": str(prior.value)})
+                            value={"current": str(current.value), "prior": str(prior.value)}, **sql_fields)
 
-    return AskResult(status="unavailable", intent=ir.intent, reason="cash bridge not wired to compile_metric yet")
+    return AskResult(status="unavailable", intent=ir.intent, reason="cash bridge not wired to compile_metric yet",
+                        **_sql_fields(current, prior))
 
 
 def _ageing(conn, schema, tenant_id, entity_id, ir: IRRequest, config: ConfigRegistry, tenant_profile: str = "manufacturing") -> AskResult:
