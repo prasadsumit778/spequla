@@ -73,7 +73,7 @@ from decimal import Decimal
 
 from src.quality.books_to_bank import latest_reconciliation_run_id
 from src.quality.trial_balance import check_trial_balance
-from src.semantic.statements import ExecutedStatement
+from src.semantic.statements import AdmissionHook, ExecutedStatement
 
 STATES = ("open", "validated", "mapped", "reconciled", "locked", "restated")
 
@@ -148,17 +148,24 @@ class ReconciledPeriod:
 
 
 def get_current_period_lock(conn, schema: str, tenant_id: str, entity_id: int, period_key: str,
-                               statement_log: list[ExecutedStatement] | None = None) -> PeriodLockRow | None:
+                               statement_log: list[ExecutedStatement] | None = None,
+                               admission: AdmissionHook | None = None) -> PeriodLockRow | None:
     """`statement_log`, when passed, collects this read into the caller's
-    record of what reached Postgres (src/semantic/statements.py). The Ask
-    surface's data_health intent passes one, because this row is part of the
-    answer that intent returns rather than a gate in front of it. Default
-    None leaves the period gate and the transition paths unchanged."""
+    record of what reached Postgres (src/semantic/statements.py), and
+    `admission` puts corpus/07 section 7's gates in front of it before it
+    runs. The Ask surface's data_health intent passes both, because this row
+    is part of the answer that intent returns rather than a gate in front of
+    it. Both default to None, leaving the period gate and the transition
+    paths -- neither of which a model can reach -- unchanged."""
     sql = (f'SELECT lock_id, status, snapshot_at, mapping_version_id, locked_by, locked_at, '
               f'       restated_from, restatement_reason '
               f'FROM "{schema}".period_lock '
               f'WHERE tenant_id = %s AND entity_id = %s AND period_key = %s '
               f'ORDER BY lock_id DESC LIMIT 1')
+    if admission is not None:
+        # Gate 7 returns this one unchanged -- it carries its own LIMIT 1, so
+        # there is nothing to cap. Gates 1-6 still run on it.
+        sql = admission(sql, (f'"{schema}".period_lock',)).sql
     if statement_log is not None:
         statement_log.append(ExecutedStatement(sql, (f'"{schema}".period_lock',), gated=True))
     with conn.cursor() as cur:

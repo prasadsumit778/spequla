@@ -21,8 +21,11 @@ from __future__ import annotations
 
 from datetime import date
 
-from src.semantic.compiler import _fetch_leaf_amounts, leaf_amount_statements
+import pytest
+
+from src.semantic.compiler import RowCapTruncated, _fetch_leaf_amounts, leaf_amount_statements
 from src.semantic.statements import (
+    AdmittedStatement,
     ExecutedStatement,
     distinct_statements,
     joined_sql,
@@ -34,12 +37,12 @@ CLASSES = ["revenue.product", "revenue.service"]
 
 
 class _FakeCursor:
-    """Records what it was asked to execute and returns nothing. Enough for
-    _fetch_leaf_amounts: it reads rows as tuples and a set comprehension,
-    both of which an empty result satisfies."""
+    """Records what it was asked to execute and returns `rows`. Enough for
+    _fetch_leaf_amounts: it reads rows as tuples and a set comprehension."""
 
-    def __init__(self, log: list[tuple[str, tuple]]):
+    def __init__(self, log: list[tuple[str, tuple]], rows: list[tuple]):
         self.log = log
+        self.rows = rows
 
     def __enter__(self):
         return self
@@ -51,22 +54,24 @@ class _FakeCursor:
         self.log.append((sql, params))
 
     def fetchall(self):
-        return []
+        return self.rows
 
 
 class _FakeConn:
-    def __init__(self):
+    def __init__(self, rows: list[tuple] | None = None):
         self.executed: list[tuple[str, tuple]] = []
+        self.rows = rows or []
 
     def cursor(self):
-        return _FakeCursor(self.executed)
+        return _FakeCursor(self.executed, self.rows)
 
 
-def _run(time_logic: str = "period_sum"):
-    conn = _FakeConn()
+def _run(time_logic: str = "period_sum", conn=None, admission=None):
+    conn = conn or _FakeConn()
     _, _, _, recorded = _fetch_leaf_amounts(
         conn, SCHEMA, "tenant-abc", 1, mapping_version_id=7, classes=CLASSES,
         time_logic=time_logic, period_start=date(2026, 4, 1), period_end=date(2026, 4, 30),
+        admission=admission,
     )
     return conn, recorded
 
@@ -166,3 +171,114 @@ class TestStatementRecord:
             assert False, "a record of what already ran must not be rewritable"
         except Exception:
             pass
+
+
+class TestAdmissionRunsBeforeExecution:
+    """The hook is called before `cursor.execute`, and what it returns is
+    what runs. No database: the question is ordering and text, not rows.
+    tests/integration/test_ask_admission_ordering.py asks the same questions
+    of the live path."""
+
+    def test_both_statements_of_a_leaf_are_admitted_before_either_executes(self):
+        # A leaf is atomic. A tree is not -- a rejection at the fifth leaf
+        # leaves the first four run -- but a rejection must never land
+        # between the two halves of one leaf's read.
+        order: list[str] = []
+
+        def admission(sql, tables):
+            order.append(f"admit:{'amounts' if 'GROUP BY' in sql else 'load_runs'}")
+            return AdmittedStatement(sql, None)
+
+        conn = _FakeConn()
+        original_execute = _FakeCursor.execute
+
+        def spy_execute(self, sql, params=None):
+            order.append(f"execute:{'amounts' if 'GROUP BY' in sql else 'load_runs'}")
+            return original_execute(self, sql, params)
+
+        _FakeCursor.execute = spy_execute
+        try:
+            _run(conn=conn, admission=admission)
+        finally:
+            _FakeCursor.execute = original_execute
+
+        assert order == ["admit:amounts", "admit:load_runs", "execute:amounts", "execute:load_runs"]
+
+    def test_the_text_the_hook_returns_is_the_text_that_executes(self):
+        def admission(sql, tables):
+            return AdmittedStatement(f"{sql} LIMIT 10000", 10_000)
+
+        conn, recorded = _run(admission=admission)
+        assert all(sql.endswith("LIMIT 10000") for sql, _ in conn.executed)
+        # And the record follows the cap, so query_log and the "view SQL"
+        # panel show what ran rather than what was submitted.
+        assert all(s.sql.endswith("LIMIT 10000") for s in recorded)
+
+    def test_a_rejecting_hook_stops_the_statement_reaching_the_cursor(self):
+        class Rejected(Exception):
+            pass
+
+        def admission(sql, tables):
+            raise Rejected()
+
+        conn = _FakeConn()
+        with pytest.raises(Rejected):
+            _run(conn=conn, admission=admission)
+        assert conn.executed == [], "a rejected statement was executed anyway"
+
+    def test_no_hook_means_no_cap_and_no_rewrite(self):
+        # The monthly pack and overview tiles path: deterministic, no model,
+        # no gates, unchanged text.
+        conn, recorded = _run()
+        assert not any("LIMIT" in sql.upper() for sql, _ in conn.executed)
+        assert all(s.gated for s in recorded)
+
+
+class TestRowCapTripwire:
+    """D-067's LIMIT 10000 applied to a GROUP BY aggregate whose rows are
+    then summed is a silent-wrong-number path. Exactly-cap must fail loudly.
+
+    The cap is set to 2 here rather than 10,000 so the condition is
+    reachable in a unit test. The number is not the point; the comparison
+    is. Against real query shapes this cannot fire -- both statements
+    collapse to at most the taxonomy's classes and the entity's load runs --
+    which is why it is a tripwire rather than a handler."""
+
+    def test_exactly_the_cap_raises_rather_than_returning_a_short_value(self):
+        def admission(sql, tables):
+            return AdmittedStatement(f"{sql} LIMIT 2", 2)
+
+        conn = _FakeConn(rows=[("revenue.product", 100, 5), ("revenue.service", 50, 3)])
+        with pytest.raises(RowCapTruncated) as raised:
+            _run(conn=conn, admission=admission)
+        assert raised.value.row_cap == 2
+        assert raised.value.row_count == 2
+
+    def test_the_message_names_D_067_and_the_statement(self):
+        def admission(sql, tables):
+            return AdmittedStatement(f"{sql} LIMIT 2", 2)
+
+        conn = _FakeConn(rows=[("a", 1, 1), ("b", 2, 1)])
+        with pytest.raises(RowCapTruncated) as raised:
+            _run(conn=conn, admission=admission)
+        message = str(raised.value)
+        assert "D-067" in message
+        assert "fact_gl_entry" in message, "the statement that tripped it must be named"
+        assert "summed" in message
+
+    def test_under_the_cap_returns_normally(self):
+        def admission(sql, tables):
+            return AdmittedStatement(f"{sql} LIMIT 5", 5)
+
+        conn = _FakeConn(rows=[("revenue.product", 100, 5)])
+        conn_, recorded = _run(conn=conn, admission=admission)
+        assert len(recorded) == 2
+
+    def test_an_uncapped_statement_is_never_checked(self):
+        # row_cap None means gate 7 applied nothing -- there is no
+        # truncation to suspect, however many rows come back.
+        def admission(sql, tables):
+            return AdmittedStatement(sql, None)
+
+        conn = _FakeConn(rows=[("a", 1, 1)] * 50)
+        _run(conn=conn, admission=admission)  # must not raise

@@ -43,9 +43,10 @@ from src.semantic.bridges import (
     compute_ebitda_bridge,
     not_configured,
 )
-from src.semantic.compiler import CompiledMetric, compile_metric, period_bounds
+from src.semantic.compiler import CompiledMetric, _admit, compile_metric, period_bounds
 from src.semantic.ir import IRRequest
 from src.semantic.statements import (
+    AdmissionHook,
     ExecutedStatement,
     distinct_statements,
     joined_sql,
@@ -114,11 +115,18 @@ def _sql_fields(*statements: ExecutedStatement | list[ExecutedStatement] | Compi
 
 
 def compile_and_execute(conn, schema: str, tenant_id: str, entity_id: int, ir: IRRequest,
-                           config: ConfigRegistry, tenant_profile: str = "manufacturing") -> AskResult:
+                           config: ConfigRegistry, tenant_profile: str = "manufacturing",
+                           admission: AdmissionHook | None = None) -> AskResult:
+    """`admission` is corpus/07 section 2's stage 7, handed down so it runs
+    at stage 7 -- immediately before each statement executes -- rather than
+    after stage 8 has already been to the database. It raises
+    AdmissionRejected (src/semantic/admission.py) out through here, which
+    src/semantic/ask.py catches; nothing in this module swallows it, because
+    a rejection is not one intent's business to interpret."""
     handler = _INTENT_HANDLERS.get(ir.intent)
     if handler is None:
         return AskResult(status="error", intent=ir.intent, reason=f"no handler for intent {ir.intent!r}")
-    return handler(conn, schema, tenant_id, entity_id, ir, config, tenant_profile)
+    return handler(conn, schema, tenant_id, entity_id, ir, config, tenant_profile, admission)
 
 
 def _period_key_from_ir(ir: IRRequest) -> str:
@@ -166,11 +174,13 @@ def _refuse_unreportable(conn, schema: str, tenant_id: str, entity_id: int, inte
     )
 
 
-def _metric_value(conn, schema, tenant_id, entity_id, ir: IRRequest, config: ConfigRegistry, tenant_profile: str = "manufacturing") -> AskResult:
+def _metric_value(conn, schema, tenant_id, entity_id, ir: IRRequest, config: ConfigRegistry, tenant_profile: str = "manufacturing",
+                     admission: AdmissionHook | None = None) -> AskResult:
     period_key = _period_key_from_ir(ir)
     if refused := _refuse_unreportable(conn, schema, tenant_id, entity_id, ir.intent, period_key):
         return refused
-    result = compile_metric(conn, schema, tenant_id, entity_id, ir.metric, period_key, config)
+    result = compile_metric(conn, schema, tenant_id, entity_id, ir.metric, period_key, config,
+                                admission=admission)
     # A decision-gated metric returns before it issues a single statement,
     # so its record is empty and sql_text is None. That is the honest
     # answer: the previous code reported a query for a question that never
@@ -183,7 +193,8 @@ def _metric_value(conn, schema, tenant_id, entity_id, ir: IRRequest, config: Con
                         row_count=result.row_count, **_sql_fields(result))
 
 
-def _metric_trend(conn, schema, tenant_id, entity_id, ir: IRRequest, config: ConfigRegistry, tenant_profile: str = "manufacturing") -> AskResult:
+def _metric_trend(conn, schema, tenant_id, entity_id, ir: IRRequest, config: ConfigRegistry, tenant_profile: str = "manufacturing",
+                     admission: AdmissionHook | None = None) -> AskResult:
     if ir.period is None or ir.period.resolved_range is None:
         return AskResult(status="error", intent=ir.intent, reason="metric_trend requires period.resolved_range")
     start = date.fromisoformat(ir.period.resolved_range[0])
@@ -217,7 +228,7 @@ def _metric_trend(conn, schema, tenant_id, entity_id, ir: IRRequest, config: Con
             last_refusal = refused.refusal
             series.append({"period": pk, "status": "refused", "value": None, "reason": refused.reason})
             continue
-        r = compile_metric(conn, schema, tenant_id, entity_id, ir.metric, pk, config)
+        r = compile_metric(conn, schema, tenant_id, entity_id, ir.metric, pk, config, admission=admission)
         executed.extend(r.executed_sql)
         last_result = r
         series.append({"period": pk, "status": r.status, "value": str(r.value) if r.value is not None else None,
@@ -238,11 +249,13 @@ def _metric_trend(conn, schema, tenant_id, entity_id, ir: IRRequest, config: Con
                         **_sql_fields(executed))
 
 
-def _metric_comparison(conn, schema, tenant_id, entity_id, ir: IRRequest, config: ConfigRegistry, tenant_profile: str = "manufacturing") -> AskResult:
+def _metric_comparison(conn, schema, tenant_id, entity_id, ir: IRRequest, config: ConfigRegistry, tenant_profile: str = "manufacturing",
+                     admission: AdmissionHook | None = None) -> AskResult:
     period_key = _period_key_from_ir(ir)
     if refused := _refuse_unreportable(conn, schema, tenant_id, entity_id, ir.intent, period_key):
         return refused
-    current = compile_metric(conn, schema, tenant_id, entity_id, ir.metric, period_key, config)
+    current = compile_metric(conn, schema, tenant_id, entity_id, ir.metric, period_key, config,
+                                admission=admission)
     if current.status != "ok":
         return AskResult(status="blocked" if current.status == "blocked" else "unavailable", intent=ir.intent,
                             reason=current.reason, blocking_decisions=current.blocking_decisions,
@@ -272,7 +285,8 @@ def _metric_comparison(conn, schema, tenant_id, entity_id, ir: IRRequest, config
         compare_cell = {"period": compare_key, "value": None, "status": "refused",
                           "reason": compare_refused.reason}
     else:
-        compare = compile_metric(conn, schema, tenant_id, entity_id, ir.metric, compare_key, config)
+        compare = compile_metric(conn, schema, tenant_id, entity_id, ir.metric, compare_key, config,
+                                    admission=admission)
         executed.extend(compare.executed_sql)
         compare_cell = {"period": compare_key, "value": str(compare.value) if compare.status == "ok" else None,
                           "status": compare.status, "reason": compare.reason}
@@ -284,7 +298,8 @@ def _metric_comparison(conn, schema, tenant_id, entity_id, ir: IRRequest, config
     )
 
 
-def _metric_breakdown_or_ranking(conn, schema, tenant_id, entity_id, ir: IRRequest, config: ConfigRegistry, tenant_profile: str = "manufacturing") -> AskResult:
+def _metric_breakdown_or_ranking(conn, schema, tenant_id, entity_id, ir: IRRequest, config: ConfigRegistry, tenant_profile: str = "manufacturing",
+                     admission: AdmissionHook | None = None) -> AskResult:
     # Ahead of the dimension check on purpose -- see _refuse_unreportable on
     # why an unreportable period is the thing to state when both apply.
     if refused := _refuse_unreportable(conn, schema, tenant_id, entity_id, ir.intent,
@@ -298,10 +313,11 @@ def _metric_breakdown_or_ranking(conn, schema, tenant_id, entity_id, ir: IRReque
     # are the only currently-populated dimensions, and grouping by them is
     # not a meaningful "breakdown" in the golden-question sense) -- report
     # the aggregate value honestly rather than fabricate a grouped result.
-    return _metric_value(conn, schema, tenant_id, entity_id, ir, config, tenant_profile)
+    return _metric_value(conn, schema, tenant_id, entity_id, ir, config, tenant_profile, admission)
 
 
-def _statement_view(conn, schema, tenant_id, entity_id, ir: IRRequest, config: ConfigRegistry, tenant_profile: str = "manufacturing") -> AskResult:
+def _statement_view(conn, schema, tenant_id, entity_id, ir: IRRequest, config: ConfigRegistry, tenant_profile: str = "manufacturing",
+                     admission: AdmissionHook | None = None) -> AskResult:
     if ir.period is None:
         return AskResult(status="error", intent=ir.intent, reason="statement_view requires a period")
     period_start, period_end = period_bounds(_period_key_from_ir(ir)) if ir.period.type == "month" else (None, None)
@@ -345,7 +361,8 @@ def _statement_view(conn, schema, tenant_id, entity_id, ir: IRRequest, config: C
     )
 
 
-def _data_health(conn, schema, tenant_id, entity_id, ir: IRRequest, config: ConfigRegistry, tenant_profile: str = "manufacturing") -> AskResult:
+def _data_health(conn, schema, tenant_id, entity_id, ir: IRRequest, config: ConfigRegistry, tenant_profile: str = "manufacturing",
+                     admission: AdmissionHook | None = None) -> AskResult:
     """corpus/07 section 4: 'Is June reconciled?' -- reads period_lock and
     reconciliation_run.
 
@@ -360,12 +377,14 @@ def _data_health(conn, schema, tenant_id, entity_id, ir: IRRequest, config: Conf
     executed: list[ExecutedStatement] = []
     if ir.period is not None:
         period_key = _period_key_from_ir(ir)
-        lock = get_current_period_lock(conn, schema, tenant_id, entity_id, period_key, statement_log=executed)
+        lock = get_current_period_lock(conn, schema, tenant_id, entity_id, period_key,
+                                            statement_log=executed, admission=admission)
         checks_sql = (f'SELECT check_type, status, residual_inr FROM "{schema}".reconciliation_run '
                          f'WHERE tenant_id=%s AND entity_id=%s AND period_key=%s ORDER BY run_at DESC')
-        executed.append(ExecutedStatement(checks_sql, (f'"{schema}".reconciliation_run',), gated=True))
+        checks_stmt = _admit(admission, checks_sql, (f'"{schema}".reconciliation_run',))
+        executed.append(ExecutedStatement(checks_stmt.sql, (f'"{schema}".reconciliation_run',), gated=True))
         with conn.cursor() as cur:
-            cur.execute(checks_sql, (tenant_id, entity_id, period_key))
+            cur.execute(checks_stmt.sql, (tenant_id, entity_id, period_key))
             checks = [{"check_type": r[0], "status": r[1], "residual_inr": str(r[2])} for r in cur.fetchall()]
         return AskResult(status="ok", intent=ir.intent,
                             value={"period": period_key, "status": lock.status if lock else "open", "checks": checks},
@@ -388,9 +407,13 @@ def _data_health(conn, schema, tenant_id, entity_id, ir: IRRequest, config: Conf
     unmapped_sql = (f'SELECT COALESCE(SUM(period_value_inr), 0), '
                        f"       COALESCE(SUM(period_value_inr) FILTER (WHERE canonical_class='suspense.unmapped'), 0) "
                        f'FROM "{schema}".map_account WHERE mapping_version_id = %s AND tenant_id = %s')
-    executed.append(ExecutedStatement(unmapped_sql, (f'"{schema}".map_account',), gated=True))
+    # Two aggregates over the whole table, so this returns exactly one row
+    # whatever gate 7 appends -- no truncation to check for, unlike
+    # compiler.py's leaf reads, whose rows are summed after the cap.
+    unmapped_stmt = _admit(admission, unmapped_sql, (f'"{schema}".map_account',))
+    executed.append(ExecutedStatement(unmapped_stmt.sql, (f'"{schema}".map_account',), gated=True))
     with conn.cursor() as cur:
-        cur.execute(unmapped_sql, (mapping_version_id, tenant_id))
+        cur.execute(unmapped_stmt.sql, (mapping_version_id, tenant_id))
         total, unmapped = cur.fetchone()
     pct = float(unmapped / total) if total else 0.0
     return AskResult(status="ok", intent=ir.intent,
@@ -398,7 +421,8 @@ def _data_health(conn, schema, tenant_id, entity_id, ir: IRRequest, config: Conf
                         **_sql_fields(executed))
 
 
-def _definition_lookup(conn, schema, tenant_id, entity_id, ir: IRRequest, config: ConfigRegistry, tenant_profile: str = "manufacturing") -> AskResult:
+def _definition_lookup(conn, schema, tenant_id, entity_id, ir: IRRequest, config: ConfigRegistry, tenant_profile: str = "manufacturing",
+                     admission: AdmissionHook | None = None) -> AskResult:
     """corpus/07 section 4: 'Registry lookup, returns the resolved contract.
     No SQL runs.' Genuinely no database touch at all."""
     if ir.metric not in config.metrics:
@@ -409,7 +433,8 @@ def _definition_lookup(conn, schema, tenant_id, entity_id, ir: IRRequest, config
                         value={"registry": contract.registry.model_dump(), "contract": body})
 
 
-def _variance_explain(conn, schema, tenant_id, entity_id, ir: IRRequest, config: ConfigRegistry, tenant_profile: str = "manufacturing") -> AskResult:
+def _variance_explain(conn, schema, tenant_id, entity_id, ir: IRRequest, config: ConfigRegistry, tenant_profile: str = "manufacturing",
+                     admission: AdmissionHook | None = None) -> AskResult:
     if ir.metric not in ("ebitda", "closing_cash"):
         return AskResult(status="unavailable", intent=ir.intent,
                             reason=f"variance_explain for {ir.metric!r} has no bridge implemented yet "
@@ -428,8 +453,9 @@ def _variance_explain(conn, schema, tenant_id, entity_id, ir: IRRequest, config:
         if refused := _refuse_unreportable(conn, schema, tenant_id, entity_id, ir.intent, gated):
             return refused
 
-    current = compile_metric(conn, schema, tenant_id, entity_id, ir.metric, period_key, config)
-    prior = compile_metric(conn, schema, tenant_id, entity_id, ir.metric, prior_key, config)
+    current = compile_metric(conn, schema, tenant_id, entity_id, ir.metric, period_key, config,
+                                admission=admission)
+    prior = compile_metric(conn, schema, tenant_id, entity_id, ir.metric, prior_key, config, admission=admission)
     if current.status != "ok" or prior.status != "ok":
         blocked = current if current.status != "ok" else prior
         return AskResult(status="blocked" if blocked.status == "blocked" else "unavailable", intent=ir.intent,
@@ -437,10 +463,14 @@ def _variance_explain(conn, schema, tenant_id, entity_id, ir: IRRequest, config:
                             **_sql_fields(current, prior))
 
     if ir.metric == "ebitda":
-        gp_current = compile_metric(conn, schema, tenant_id, entity_id, "gross_profit", period_key, config)
-        gp_prior = compile_metric(conn, schema, tenant_id, entity_id, "gross_profit", prior_key, config)
-        opex_current = compile_metric(conn, schema, tenant_id, entity_id, "opex", period_key, config)
-        opex_prior = compile_metric(conn, schema, tenant_id, entity_id, "opex", prior_key, config)
+        gp_current = compile_metric(conn, schema, tenant_id, entity_id, "gross_profit", period_key, config,
+                                       admission=admission)
+        gp_prior = compile_metric(conn, schema, tenant_id, entity_id, "gross_profit", prior_key, config,
+                                       admission=admission)
+        opex_current = compile_metric(conn, schema, tenant_id, entity_id, "opex", period_key, config,
+                                       admission=admission)
+        opex_prior = compile_metric(conn, schema, tenant_id, entity_id, "opex", prior_key, config,
+                                       admission=admission)
         # Six compiles across two periods -- the widest single Ask question
         # in the build, and the clearest case for why the record is the
         # union of a tree rather than one statement standing for it.
@@ -458,14 +488,16 @@ def _variance_explain(conn, schema, tenant_id, entity_id, ir: IRRequest, config:
                         **_sql_fields(current, prior))
 
 
-def _ageing(conn, schema, tenant_id, entity_id, ir: IRRequest, config: ConfigRegistry, tenant_profile: str = "manufacturing") -> AskResult:
+def _ageing(conn, schema, tenant_id, entity_id, ir: IRRequest, config: ConfigRegistry, tenant_profile: str = "manufacturing",
+                     admission: AdmissionHook | None = None) -> AskResult:
     return AskResult(status="unavailable", intent=ir.intent,
                         reason="ageing needs AR/AP open-item detail (fact_ar_open/fact_ap_open or the AR/AP "
                                 "ageing template), which has no ingestion pipeline built yet -- only COA, TB, "
                                 "GL and Bank are ingested in this build")
 
 
-def _concentration(conn, schema, tenant_id, entity_id, ir: IRRequest, config: ConfigRegistry, tenant_profile: str = "manufacturing") -> AskResult:
+def _concentration(conn, schema, tenant_id, entity_id, ir: IRRequest, config: ConfigRegistry, tenant_profile: str = "manufacturing",
+                     admission: AdmissionHook | None = None) -> AskResult:
     return AskResult(status="unavailable", intent=ir.intent,
                         reason="concentration needs a customer/vendor breakdown, which needs dim_customer/"
                                 "dim_vendor -- deferred since Sprint 1 (see UNAVAILABLE_DIMENSIONS)")

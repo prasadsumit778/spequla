@@ -37,7 +37,55 @@ from src.semantic.formula import (
     match_gl_classes,
 )
 from src.semantic.overrides import resolve_parameters
-from src.semantic.statements import ExecutedStatement, distinct_statements
+from src.semantic.statements import (
+    AdmissionHook,
+    AdmittedStatement,
+    ExecutedStatement,
+    distinct_statements,
+)
+
+
+class RowCapTruncated(Exception):
+    """A row-capped statement came back holding exactly the cap, so its
+    result may be short -- and this one gets summed.
+
+    D-067 (corpus/00, resolved 2026-08-24) sets admission gate 7's cap at
+    10,000 rows, and corpus/07 section 7 states that gate as "Row cap.
+    Applied." Applying it is right. Trusting the result afterwards is not:
+    _fetch_leaf_amounts aggregates what comes back into a metric's value, so
+    a LIMIT that removed rows would return a number that is short by exactly
+    those rows, with nothing anywhere in the result saying so. That is a
+    plausible wrong number -- CLAUDE.md section 1's stated reason this system
+    exists -- reached by way of a safety control, which is the worst place to
+    find one.
+
+    This cannot fire against today's query shapes: both statements group or
+    distinct down to at most the taxonomy's canonical classes and the
+    entity's load runs, hundreds at the outside. It is a tripwire, not a
+    handler. If it ever fires, either the cap fell far below D-067's value
+    or a statement changed to row grain, and both are questions for a person
+    -- so this raises rather than truncating quietly or capping the value.
+    CLAUDE.md invariant 10: a blocking exception blocks output."""
+
+    def __init__(self, sql: str, row_cap: int, row_count: int):
+        self.sql = sql
+        self.row_cap = row_cap
+        self.row_count = row_count
+        super().__init__(
+            f"row cap of {row_cap} (D-067, admission gate 7) returned {row_count} rows -- the result may be "
+            f"truncated, and this statement's rows are summed into a metric value, so no value is produced "
+            f"from it. Statement: {sql}"
+        )
+
+
+def _admit(admission: AdmissionHook | None, sql: str, tables: tuple[str, ...]) -> AdmittedStatement:
+    """Stage 7 for one statement. `None` is the deterministic, non-Ask
+    caller (the monthly pack, the overview tiles): no model is anywhere near
+    those, corpus/07 section 7's gates are the Ask surface's, and they
+    execute what they built with no cap applied."""
+    if admission is None:
+        return AdmittedStatement(sql, None)
+    return admission(sql, tables)
 
 
 def period_bounds(period_key: str) -> tuple[date, date]:
@@ -99,7 +147,8 @@ DIO_DEFAULT_DAYS_BASIS = 365
 def _trailing_twelve_months_value(conn, schema: str, tenant_id: str, entity_id: int, metric_id: str,
                                     period_key: str, config: ConfigRegistry,
                                     _cache: dict[tuple[str, str], "CompiledMetric"],
-                                    _executed: list[ExecutedStatement]) -> Decimal:
+                                    _executed: list[ExecutedStatement],
+                                    admission: AdmissionHook | None = None) -> Decimal:
     """Sum of metric_id's period_sum value over the trailing twelve calendar
     months ending at (and including) period_key. D-028/D-030/D-031 (corpus/00)
     resolve dso/dpo/dio's days_basis to 365 -- that convention only measures
@@ -124,7 +173,8 @@ def _trailing_twelve_months_value(conn, schema: str, tenant_id: str, entity_id: 
         while m <= 0:
             m += 12
             y -= 1
-        result = _compile_metric_cached(conn, schema, tenant_id, entity_id, metric_id, f"{y:04d}-{m:02d}", config, _cache)
+        result = _compile_metric_cached(conn, schema, tenant_id, entity_id, metric_id, f"{y:04d}-{m:02d}", config,
+                                             _cache, admission)
         _executed.extend(result.executed_sql)
         if result.status == "ok" and result.value is not None:
             total += result.value
@@ -197,6 +247,7 @@ def leaf_amount_statements(schema: str, class_count: int, time_logic: str) -> tu
 def _fetch_leaf_amounts(conn, schema: str, tenant_id: str, entity_id: int, mapping_version_id: int,
                            classes: list[str], time_logic: str,
                            period_start: date, period_end: date,
+                           admission: AdmissionHook | None = None,
                            ) -> tuple[dict[str, Decimal], int, set[int], list[ExecutedStatement]]:
     """Amount per canonical class, the row count, the set of load_run_ids
     backing it, and the statements that produced all three -- scoped to
@@ -208,30 +259,56 @@ def _fetch_leaf_amounts(conn, schema: str, tenant_id: str, entity_id: int, mappi
 
     These two are the compiled query in corpus/07 section 2's sense: stage
     6's output, executed at stage 8, and the statements admission control
-    covers (`gated=True`)."""
+    covers (`gated=True`).
+
+    **Both are admitted before either executes.** A tree of leaves is gated
+    leaf by leaf as it is walked, so a rejection deep in a derived metric
+    leaves earlier leaves already run -- but a leaf itself is atomic, which
+    costs one extra gate call and removes the one case where a rejection
+    could land between two halves of the same read."""
     if not classes:
         return {}, 0, set(), []
     amounts_sql, load_runs_sql, tables = leaf_amount_statements(schema, len(classes), time_logic)
     date_params: tuple = (period_end,) if time_logic == "period_end" else (period_start, period_end)
     params = (mapping_version_id, tenant_id, entity_id, *classes, *date_params)
+    admitted_amounts = _admit(admission, amounts_sql, tables)
+    admitted_load_runs = _admit(admission, load_runs_sql, tables)
+    # Recording the ADMITTED text, not the submitted text: gate 7 rewrites,
+    # and what this records has to be what Postgres received.
     executed: list[ExecutedStatement] = []
 
     with conn.cursor() as cur:
-        executed.append(ExecutedStatement(amounts_sql, tables, gated=True))
-        cur.execute(amounts_sql, params)
+        executed.append(ExecutedStatement(admitted_amounts.sql, tables, gated=True))
+        cur.execute(admitted_amounts.sql, params)
         rows = cur.fetchall()
+        _refuse_if_truncated(admitted_amounts, len(rows))
         amounts = {r[0]: r[1] for r in rows}
         row_count = sum(r[2] for r in rows)
 
-        executed.append(ExecutedStatement(load_runs_sql, tables, gated=True))
-        cur.execute(load_runs_sql, params)
-        load_run_ids = {r[0] for r in cur.fetchall()}
+        executed.append(ExecutedStatement(admitted_load_runs.sql, tables, gated=True))
+        cur.execute(admitted_load_runs.sql, params)
+        load_run_rows = cur.fetchall()
+        # The load_run_ids feed a citation's source_files (corpus/07 section
+        # 8). A truncated set names fewer files than actually back the
+        # number, which is a citation that under-reports its own provenance
+        # -- checked on the same terms as the amounts above.
+        _refuse_if_truncated(admitted_load_runs, len(load_run_rows))
+        load_run_ids = {r[0] for r in load_run_rows}
     return amounts, row_count, load_run_ids, executed
+
+
+def _refuse_if_truncated(statement: AdmittedStatement, row_count: int) -> None:
+    """A capped statement that came back holding exactly its cap may have
+    been cut short. See RowCapTruncated: the rows below are aggregated, so a
+    short result is a short number that says nothing about being short."""
+    if statement.row_cap is not None and row_count >= statement.row_cap:
+        raise RowCapTruncated(statement.sql, statement.row_cap, row_count)
 
 
 def compile_metric(conn, schema: str, tenant_id: str, entity_id: int, metric_id: str,
                      period_key: str, config: ConfigRegistry,
-                     _cache: dict[tuple[str, str], CompiledMetric] | None = None) -> CompiledMetric:
+                     _cache: dict[tuple[str, str], CompiledMetric] | None = None,
+                     admission: AdmissionHook | None = None) -> CompiledMetric:
     """(metric_id, tenant, entity, period) -> CompiledMetric. Dimensions
     (customer/product/channel/...) are corpus/07's Ask-surface filters --
     out of this sprint's "AI: None" scope, which compiles a period's
@@ -249,16 +326,19 @@ def compile_metric(conn, schema: str, tenant_id: str, entity_id: int, metric_id:
     starting a fresh (uncached) one."""
     if _cache is None:
         _cache = {}
-    return _compile_metric_cached(conn, schema, tenant_id, entity_id, metric_id, period_key, config, _cache)
+    return _compile_metric_cached(conn, schema, tenant_id, entity_id, metric_id, period_key, config, _cache,
+                                     admission)
 
 
 def _compile_metric_cached(conn, schema: str, tenant_id: str, entity_id: int, metric_id: str,
                               period_key: str, config: ConfigRegistry,
-                              _cache: dict[tuple[str, str], CompiledMetric]) -> CompiledMetric:
+                              _cache: dict[tuple[str, str], CompiledMetric],
+                              admission: AdmissionHook | None = None) -> CompiledMetric:
     cache_key = (metric_id, period_key)
     if cache_key in _cache:
         return _cache[cache_key]
-    result = _compile_metric_impl(conn, schema, tenant_id, entity_id, metric_id, period_key, config, _cache)
+    result = _compile_metric_impl(conn, schema, tenant_id, entity_id, metric_id, period_key, config, _cache,
+                                     admission)
     # Deduplicated here, at the single exit every one of _compile_metric_impl's
     # eight return paths passes through, rather than at each of them. The
     # duplicates are real and ordinary: resolve_parameters issues the same
@@ -272,7 +352,8 @@ def _compile_metric_cached(conn, schema: str, tenant_id: str, entity_id: int, me
 
 def _compile_metric_impl(conn, schema: str, tenant_id: str, entity_id: int, metric_id: str,
                             period_key: str, config: ConfigRegistry,
-                            _cache: dict[tuple[str, str], CompiledMetric]) -> CompiledMetric:
+                            _cache: dict[tuple[str, str], CompiledMetric],
+                            admission: AdmissionHook | None = None) -> CompiledMetric:
     if metric_id not in config.metrics:
         raise KeyError(f"unknown metric_id: {metric_id!r}")
     contract = config.metrics[metric_id]
@@ -347,7 +428,7 @@ def _compile_metric_impl(conn, schema: str, tenant_id: str, entity_id: int, metr
             return out
         amounts, row_count, load_run_ids, leaf_statements = _fetch_leaf_amounts(
             conn, schema, tenant_id, entity_id, mapping_version_id, all_classes, reg.time_logic,
-            period_start, period_end)
+            period_start, period_end, admission)
         executed.extend(leaf_statements)
         try:
             value = eval_gl_class_formula(reg.formula, amounts, known_classes)
@@ -361,7 +442,8 @@ def _compile_metric_impl(conn, schema: str, tenant_id: str, entity_id: int, metr
         return out
 
     dep_results: dict[str, CompiledMetric] = {
-        dep_id: _compile_metric_cached(conn, schema, tenant_id, entity_id, dep_id, period_key, config, _cache)
+        dep_id: _compile_metric_cached(conn, schema, tenant_id, entity_id, dep_id, period_key, config, _cache,
+                                            admission)
         for dep_id in reg.dependencies
     }
     # A derived metric is a tree of leaf queries, not one query, and its
@@ -406,18 +488,18 @@ def _compile_metric_impl(conn, schema: str, tenant_id: str, entity_id: int, metr
         days_basis = out.parameters_used.get("days_basis", DSO_DEFAULT_DAYS_BASIS)
         formula = f"metric.accounts_receivable / metric.{revenue_base} * {days_basis}"
         values[revenue_base] = _trailing_twelve_months_value(
-            conn, schema, tenant_id, entity_id, revenue_base, period_key, config, _cache, executed)
+            conn, schema, tenant_id, entity_id, revenue_base, period_key, config, _cache, executed, admission)
     elif metric_id == "dpo":
         cost_base = out.parameters_used.get("cost_base", DPO_DEFAULT_COST_BASE)
         days_basis = out.parameters_used.get("days_basis", DPO_DEFAULT_DAYS_BASIS)
         formula = f"metric.accounts_payable / metric.{cost_base} * {days_basis}"
         values[cost_base] = _trailing_twelve_months_value(
-            conn, schema, tenant_id, entity_id, cost_base, period_key, config, _cache, executed)
+            conn, schema, tenant_id, entity_id, cost_base, period_key, config, _cache, executed, admission)
     elif metric_id == "dio":
         days_basis = out.parameters_used.get("days_basis", DIO_DEFAULT_DAYS_BASIS)
         formula = f"metric.inventory / metric.cogs * {days_basis}"
         values["cogs"] = _trailing_twelve_months_value(
-            conn, schema, tenant_id, entity_id, "cogs", period_key, config, _cache, executed)
+            conn, schema, tenant_id, entity_id, "cogs", period_key, config, _cache, executed, admission)
 
     try:
         out.value = eval_metric_formula(formula, values)

@@ -46,8 +46,38 @@ shared with the monthly pack and the overview tiles.
 """
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class AdmittedStatement:
+    """What admission control hands back for one statement: the SQL to
+    execute, and the row cap it applied.
+
+    `sql` is gate 7's output, not its input -- corpus/07 section 7 gate 7 is
+    "Row cap. Applied", so the caller executes THIS text, not the text it
+    submitted. Until 2026-08-31 nothing in the repo read it: gate 7 computed
+    D-067's LIMIT 10000 and run_admission_gates returned it into a field
+    with no consumer anywhere.
+
+    `row_cap` is the cap actually applied, or None when the statement
+    already carried its own LIMIT and gate 7 left it alone. The executor
+    needs the number, not just the text: a cap that truncates a result which
+    is then aggregated produces a number that is short and says nothing
+    about it, so the executor compares the rows it got against this."""
+    sql: str
+    row_cap: int | None = None
+
+
+# Stage 7 standing between stage 6 and stage 8 (corpus/07 section 2), as a
+# type. A compiler holding one of these calls it immediately before each
+# `cursor.execute` and runs whatever comes back; a compiler holding None is
+# off the Ask surface -- the monthly pack and the overview tiles, which are
+# deterministic paths with no model anywhere near them -- and executes what
+# it built. Raises AdmissionRejected (src/semantic/admission.py) to stop a
+# statement reaching Postgres at all.
+AdmissionHook = Callable[[str, tuple[str, ...]], AdmittedStatement]
 
 
 @dataclass(frozen=True)

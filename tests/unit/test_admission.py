@@ -1,5 +1,6 @@
 """Unit tests for src/semantic/admission.py's seven gates -- pure, no DB."""
 from src.semantic.admission import (
+    ROW_CAP,
     AdmissionRejected,
     gate_1_parse,
     gate_2_read_only,
@@ -90,13 +91,26 @@ def test_gate_5_accepts_canonical_table():
 
 
 def test_gate_7_applies_a_limit_when_none_present():
-    result = gate_7_row_cap("SELECT 1 FROM x")
-    assert "LIMIT" in result.upper()
+    sql, row_cap = gate_7_row_cap("SELECT 1 FROM x")
+    assert f"LIMIT {ROW_CAP}" in sql.upper()
+    # The cap is returned alongside the text, not left to be re-parsed out of
+    # it: the executor compares the rows it got against this number to tell a
+    # complete result from a truncated one (compiler.py's RowCapTruncated).
+    assert row_cap == ROW_CAP
 
 
 def test_gate_7_leaves_existing_limit_alone():
-    result = gate_7_row_cap("SELECT 1 FROM x LIMIT 5")
-    assert result.count("LIMIT") == 1 or result.upper().count("LIMIT") == 1
+    sql, row_cap = gate_7_row_cap("SELECT 1 FROM x LIMIT 5")
+    assert sql.upper().count("LIMIT") == 1
+    assert row_cap is None, "gate 7 applied no cap of its own, so it reports none"
+
+
+def test_gate_7_does_not_reject():
+    # corpus/07 section 7 states gate 7 as "Row cap. Applied" -- it rewrites
+    # and returns, it never raises. If it rejected, it would reject every
+    # statement the compiler emits, since none carries a LIMIT of its own.
+    for sql in ("SELECT 1 FROM x", "SELECT 1 FROM x LIMIT 5", "SELECT 1 FROM x;"):
+        gate_7_row_cap(sql)  # must not raise
 
 
 def test_run_admission_gates_admits_valid_query():

@@ -15,6 +15,16 @@
 "Nothing that touches a number is a model call" (section 2) -- stages 6-10
 never import a ModelClient.
 
+**Stage 7 runs at stage 7.** Admission control is handed into the compiler
+as an AdmissionGate and called immediately before each `cursor.execute`, so
+a rejection stops the query rather than the response, and gate 7's row cap
+is applied to the text that runs. Until 2026-08-31 this module executed
+first and gated sixteen lines later, which made stages 7 and 8 read in the
+opposite order to the table above; the gates also inspected a reconstruction
+of the query rather than the query (src/semantic/statements.py). Both are
+fixed. What a rejection does and does not guarantee is stated precisely on
+admission.AdmissionGate, not paraphrased here.
+
 Gates 2 (read-only) and 5 (PII exclusion) are enforced by admission.py's
 string-pattern checks on the compiled SQL text, not yet by Postgres's own
 model_reachable grants (corpus/07 section 7: "The model-reachable role is a
@@ -35,10 +45,10 @@ from datetime import datetime, timezone
 from decimal import Decimal
 
 from src.config.loader import ConfigRegistry
-from src.semantic.admission import run_admission_gates
+from src.semantic.admission import ROW_CAP, AdmissionGate, AdmissionRejected
 from src.semantic.ask_compiler import AskResult, compile_and_execute
 from src.semantic.citation import Citation, NotCitable, build_citation
-from src.semantic.compiler import CompiledMetric
+from src.semantic.compiler import CompiledMetric, RowCapTruncated
 from src.semantic.ir import IRRequest, IRValidationError, validate_ir
 from src.semantic.model_client import IntentClassification, ModelClient
 from src.semantic.refusal import Refusal, build_refusal, refusal_for_blocked_decision
@@ -132,18 +142,23 @@ def ask(conn, schema: str, tenant_id: str, entity_id: int, question: str, model_
         return AskResponse(status="rejected", question=question, intent=ir.intent, ir=ir_dict,
                               refusal=build_refusal("ambiguous", str(e)))
 
-    result = _execute_as_model_reachable(conn, schema, tenant_id, entity_id, ir, config, tenant_profile)
-
-    sanity_issue = _sanity_check(result)
-    if sanity_issue:
-        result.reason = sanity_issue
-
-    # One gate pass per statement that actually ran, on the exact text
-    # `cursor.execute` received (src/semantic/statements.py). A derived
-    # metric is a tree of leaf queries, not one query, so gating one
-    # representative statement would leave the rest unchecked -- which is
-    # what happened until 2026-08-31, when ask_compiler.py handed these
-    # gates a hand-maintained string that no code path ever executed.
+    # Stage 7, in the position corpus/07 section 2's table has always given
+    # it: BETWEEN compilation and execution. `gate` is handed down into the
+    # compiler and called immediately before each `cursor.execute`, on the
+    # exact text that execute receives, and returns the row-capped text the
+    # compiler then runs (D-067's LIMIT 10000, gate 7).
+    #
+    # Until 2026-08-31 this ran sixteen lines below, AFTER
+    # _execute_as_model_reachable had already been to the database -- so a
+    # rejection suppressed the response, not the query, and gate 7's capped
+    # SQL was returned into a field with no consumer anywhere in the repo.
+    #
+    # A rejection raises out of the compiler. That guarantees the rejected
+    # statement never reached Postgres, and neither did anything after it.
+    # It does not guarantee that nothing ran: a derived metric is a tree,
+    # gated statement by statement as it is walked, so earlier leaves may
+    # already have executed -- each of them admitted. See AdmissionGate's
+    # docstring for why the stronger guarantee is not bought.
     #
     # estimated_cost_inr defaults to None here: gate 6's ₹5 cap (D-066,
     # OPEN_QUESTIONS.md OQ-003) is real and declared, but nothing upstream
@@ -153,17 +168,36 @@ def ask(conn, schema: str, tenant_id: str, entity_id: int, question: str, model_
     # gap. Once a real ModelClient reports token usage for the intent
     # classification and IR generation calls already made above, pass the
     # resulting cost_inr through here.
-    admission = None
-    for statement in result.executed_sql:
-        if not statement.gated:
-            continue
-        admission = run_admission_gates(statement.sql, list(statement.tables), tenant_id)
-        if not admission.admitted:
-            _log(conn, tenant_id, entity_id, user_id, role, question, ir.intent, ir_dict, result.sql_text, False,
-                   admission.gate, admission.reason, None, started, None, None)
-            return AskResponse(status="rejected", question=question, intent=ir.intent, ir=ir_dict,
-                                  refusal=build_refusal("ambiguous", f"admission control rejected this query "
-                                                                        f"at gate {admission.gate!r}: {admission.reason}"))
+    gate = AdmissionGate(tenant_id=tenant_id, estimated_cost_inr=None)
+    try:
+        result = _execute_as_model_reachable(conn, schema, tenant_id, entity_id, ir, config, tenant_profile, gate)
+    except AdmissionRejected as rejection:
+        _log(conn, tenant_id, entity_id, user_id, role, question, ir.intent, ir_dict, rejection.sql_text, False,
+               rejection.gate, rejection.reason, None, started, None, None)
+        return AskResponse(status="rejected", question=question, intent=ir.intent, ir=ir_dict,
+                              admission={"admitted": False, "gate": rejection.gate,
+                                            "statements_admitted": len(gate.admitted)},
+                              refusal=build_refusal("ambiguous", f"admission control rejected this query "
+                                                                    f"at gate {rejection.gate!r}: {rejection.reason}"))
+    except RowCapTruncated as truncation:
+        # D-067's cap did its job and the result came back at exactly the
+        # cap, so the value computed from it may be short. No number is
+        # returned from a possibly-truncated read (CLAUDE.md invariant 10,
+        # and section 1's whole premise) -- the condition is reported
+        # instead, in full, with the statement named.
+        _log(conn, tenant_id, entity_id, user_id, role, question, ir.intent, ir_dict, truncation.sql, True,
+               None, str(truncation), truncation.row_count, started, None, None)
+        return AskResponse(status="error", question=question, intent=ir.intent, ir=ir_dict,
+                              admission={"admitted": True, "row_cap": truncation.row_cap,
+                                            "statements_admitted": len(gate.admitted)},
+                              refusal=build_refusal("ambiguous", str(truncation)))
+
+    sanity_issue = _sanity_check(result)
+    if sanity_issue:
+        result.reason = sanity_issue
+
+    admission = {"admitted": True, "statements_admitted": len(gate.admitted),
+                    "row_cap": ROW_CAP if any(s.row_cap for s in gate.admitted) else None}
 
     if result.status == "refused":
         # The one refusal the compiler classifies itself, because it is the
@@ -175,26 +209,27 @@ def ask(conn, schema: str, tenant_id: str, entity_id: int, question: str, model_
         _log(conn, tenant_id, entity_id, user_id, role, question, ir.intent, ir_dict, result.sql_text,
                True, None, result.reason, 0, started, None, None)
         return AskResponse(status="refused", question=question, intent=ir.intent, ir=ir_dict, result=result,
-                              refusal=result.refusal)
+                              refusal=result.refusal, admission=admission)
 
     if result.status == "blocked":
         refusal = refusal_for_blocked_decision(ir.metric or "this metric", result.blocking_decisions)
         _log(conn, tenant_id, entity_id, user_id, role, question, ir.intent, ir_dict, result.sql_text,
                True, None, None, 0, started, None, None)
         return AskResponse(status="blocked", question=question, intent=ir.intent, ir=ir_dict, result=result,
-                              refusal=refusal)
+                              refusal=refusal, admission=admission)
 
     if result.status == "unavailable":
         refusal = build_refusal("requires_data_not_held", result.reason or "the required data is not available yet")
         _log(conn, tenant_id, entity_id, user_id, role, question, ir.intent, ir_dict, result.sql_text,
                True, None, None, 0, started, None, None)
         return AskResponse(status="unavailable", question=question, intent=ir.intent, ir=ir_dict, result=result,
-                              refusal=refusal)
+                              refusal=refusal, admission=admission)
 
     if result.status == "error":
         _log(conn, tenant_id, entity_id, user_id, role, question, ir.intent, ir_dict, result.sql_text,
                True, None, None, 0, started, None, None)
-        return AskResponse(status="error", question=question, intent=ir.intent, ir=ir_dict, result=result)
+        return AskResponse(status="error", question=question, intent=ir.intent, ir=ir_dict, result=result,
+                              admission=admission)
 
     citation_dict = None
     if result.compiled_metric is not None and result.compiled_metric.status == "ok":
@@ -224,17 +259,18 @@ def ask(conn, schema: str, tenant_id: str, entity_id: int, question: str, model_
             _log(conn, tenant_id, entity_id, user_id, role, question, ir.intent, ir_dict, result.sql_text,
                    True, None, None, result.compiled_metric.row_count, started, None, None)
             return AskResponse(status="unavailable", question=question, intent=ir.intent, ir=ir_dict,
-                                  result=result, refusal=refusal)
+                                  result=result, refusal=refusal, admission=admission)
 
     _log(conn, tenant_id, entity_id, user_id, role, question, ir.intent, ir_dict, result.sql_text,
            True, None, None, result.row_count, started,
            citation_dict.get("query_hash") if citation_dict else None, None)
 
     return AskResponse(status="ok", question=question, intent=ir.intent, ir=ir_dict, result=result,
-                          citation=citation_dict)
+                          citation=citation_dict, admission=admission)
 
 
-def _execute_as_model_reachable(conn, schema, tenant_id, entity_id, ir, config, tenant_profile) -> AskResult:
+def _execute_as_model_reachable(conn, schema, tenant_id, entity_id, ir, config, tenant_profile,
+                                     admission=None) -> AskResult:
     """corpus/07 section 7: 'The model-reachable role is a database object,
     not a code path' -- execution SHOULD run under model_reachable so gates
     2 (read-only) and 5 (PII exclusion) are enforced by Postgres's own
@@ -262,7 +298,7 @@ def _execute_as_model_reachable(conn, schema, tenant_id, entity_id, ir, config, 
     gates 2 and 5 are enforced by admission.py's pattern checks only, for
     now, same posture as OQ-003's cost/row caps -- a real, disclosed gap,
     not a silent default."""
-    return compile_and_execute(conn, schema, tenant_id, entity_id, ir, config, tenant_profile)
+    return compile_and_execute(conn, schema, tenant_id, entity_id, ir, config, tenant_profile, admission)
 
 
 def _period_end_for_citation(ir: IRRequest):
